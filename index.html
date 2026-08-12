@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Guía interactiva del Airbus A380: anatomía, cifras, comparativas, operadores y cronología del mayor avión de pasajeros jamás construido.">
+<title>A380, el último gigante</title>
+</head>
+<body>
+<style>
+  /* ── Tokens · dark-first (cabina nocturna) ─────────────────────────────── */
+  :root{
+    --bg:#0B1420; --bg2:#0E1A2B; --surface:#122036; --line:#24384F;
+    --ink:#E9EFF6; --ink2:#9FB0C3; --muted:#6C8299;
+    --accent:#5E8FEF; --amber:#D9A13B;
+    --bar-main:#5E8FEF; --bar-alt:#BD831B; --bar-other:#3E5570;
+    --grid:rgba(94,143,239,.055);
+    --shadow:0 12px 40px rgba(0,0,0,.35);
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,"Liberation Mono",Menlo,monospace;
+    --display:"Arial Narrow","Helvetica Neue",Helvetica,Arial,sans-serif;
+    --body:system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#F5F7FA; --bg2:#EDF1F6; --surface:#FFFFFF; --line:#D7DFE8;
+      --ink:#152232; --ink2:#44566B; --muted:#71869C;
+      --accent:#1F53C5; --amber:#B36F00;
+      --bar-main:#1F53C5; --bar-alt:#C77800; --bar-other:#B9C6D4;
+      --grid:rgba(31,83,197,.06);
+      --shadow:0 12px 40px rgba(21,34,50,.10);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#F5F7FA; --bg2:#EDF1F6; --surface:#FFFFFF; --line:#D7DFE8;
+    --ink:#152232; --ink2:#44566B; --muted:#71869C;
+    --accent:#1F53C5; --amber:#B36F00;
+    --bar-main:#1F53C5; --bar-alt:#C77800; --bar-other:#B9C6D4;
+    --grid:rgba(31,83,197,.06);
+    --shadow:0 12px 40px rgba(21,34,50,.10);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B1420; --bg2:#0E1A2B; --surface:#122036; --line:#24384F;
+    --ink:#E9EFF6; --ink2:#9FB0C3; --muted:#6C8299;
+    --accent:#5E8FEF; --amber:#D9A13B;
+    --bar-main:#5E8FEF; --bar-alt:#BD831B; --bar-other:#3E5570;
+    --grid:rgba(94,143,239,.055);
+    --shadow:0 12px 40px rgba(0,0,0,.35);
+  }
+
+  *,*::before,*::after{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--body); font-size:16px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent); color:var(--bg)}
+  a{color:var(--accent)}
+  button{font:inherit; color:inherit; cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+
+  .wrap{max-width:1100px; margin:0 auto; padding:0 24px}
+  section{padding:88px 0}
+  .band{background:var(--bg2)}
+
+  /* ── Tipografía ────────────────────────────────────────────────────────── */
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--amber); margin:0 0 14px;
+  }
+  h2{
+    font-family:var(--display); font-weight:700; text-transform:uppercase;
+    font-size:clamp(30px,4.5vw,46px); letter-spacing:.01em; line-height:1.05;
+    margin:0 0 12px; text-wrap:balance;
+  }
+  .lede{color:var(--ink2); max-width:62ch; margin:0 0 40px}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ── Cabecera ──────────────────────────────────────────────────────────── */
+  header.top{
+    position:sticky; top:0; z-index:50;
+    background:color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+  }
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 24px; max-width:1100px; margin:0 auto;
+    font-family:var(--mono); font-size:12px; letter-spacing:.14em;
+  }
+  .brand{text-transform:uppercase; color:var(--ink2)}
+  .brand b{color:var(--ink)}
+  #themeBtn{
+    background:none; border:1px solid var(--line); border-radius:4px;
+    padding:5px 12px; font-family:var(--mono); font-size:11px;
+    letter-spacing:.14em; color:var(--ink2);
+  }
+  #themeBtn:hover{border-color:var(--accent); color:var(--ink)}
+
+  /* ── Héroe ─────────────────────────────────────────────────────────────── */
+  .hero{
+    position:relative; overflow:hidden;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      var(--bg);
+    background-size:56px 56px, 56px 56px, auto;
+    padding:110px 0 80px;
+    border-bottom:1px solid var(--line);
+  }
+  .hero .kicker{
+    font-family:var(--mono); font-size:13px; letter-spacing:.3em;
+    text-transform:uppercase; color:var(--amber); margin:0 0 18px;
+  }
+  .hero h1{
+    font-family:var(--display); font-weight:700; text-transform:uppercase;
+    font-size:clamp(72px,16vw,210px); line-height:.88; letter-spacing:.005em;
+    margin:0;
+  }
+  .hero h1 .airline{
+    display:block; font-size:clamp(20px,3.4vw,40px); letter-spacing:.42em;
+    color:var(--ink2); margin-bottom:10px;
+  }
+  .hero h1 .model{color:var(--ink)}
+  .hero h1 .model em{font-style:normal; color:var(--accent)}
+  .hero .sub{
+    max-width:56ch; color:var(--ink2); font-size:18px; margin:26px 0 0;
+  }
+  .ticker{
+    margin-top:44px; padding:14px 0; border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    font-family:var(--mono); font-size:13px; letter-spacing:.08em;
+    color:var(--ink2); display:flex; flex-wrap:wrap; gap:10px 28px;
+  }
+  .ticker b{color:var(--ink); font-weight:600}
+  .ticker .dot{color:var(--amber)}
+
+  /* ── Diagrama interactivo ──────────────────────────────────────────────── */
+  .anatomy{display:grid; grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr); gap:32px; align-items:start}
+  @media (max-width:860px){.anatomy{grid-template-columns:1fr}}
+  .planebox{position:relative; border:1px solid var(--line); border-radius:8px;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      var(--surface);
+    background-size:40px 40px, 40px 40px, auto;
+    box-shadow:var(--shadow); padding:8px;
+  }
+  .planebox svg{display:block; width:100%; height:auto}
+  .blueprint .hull{fill:none; stroke:var(--ink2); stroke-width:2}
+  .blueprint .soft{fill:none; stroke:var(--muted); stroke-width:1.4}
+  .blueprint .accent{stroke:var(--accent)}
+  .blueprint .fill{fill:var(--surface)}
+  .blueprint .deck{stroke:var(--accent); stroke-width:1.2; stroke-dasharray:3 5; opacity:.85}
+  .blueprint .dim{stroke:var(--amber); stroke-width:1}
+  .blueprint .dimtext{fill:var(--amber); font-family:var(--mono); font-size:15px; letter-spacing:.08em}
+  .blueprint .ground{stroke:var(--line); stroke-width:1.4; stroke-dasharray:8 6}
+
+  .hotspot{
+    position:absolute; width:30px; height:30px; margin:-15px 0 0 -15px;
+    border-radius:50%; border:1.5px solid var(--accent);
+    background:color-mix(in srgb, var(--bg) 55%, transparent);
+    color:var(--accent); font-family:var(--mono); font-size:12px; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+    transition:transform .15s ease, background .15s ease, color .15s ease;
+  }
+  .hotspot::after{
+    content:""; position:absolute; inset:-7px; border-radius:50%;
+    border:1px solid var(--accent); opacity:.35;
+    animation:ping 2.4s ease-out infinite;
+  }
+  @keyframes ping{0%{transform:scale(.6); opacity:.6}70%{transform:scale(1.15); opacity:0}100%{opacity:0}}
+  .hotspot:hover{transform:scale(1.18)}
+  .hotspot[aria-pressed="true"]{background:var(--accent); color:var(--bg)}
+  .hotspot[aria-pressed="true"]::after{animation:none; opacity:0}
+
+  .ecam{
+    border:1px solid var(--line); border-radius:8px; background:var(--surface);
+    box-shadow:var(--shadow); font-family:var(--mono); overflow:hidden;
+  }
+  .ecam-head{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 16px; border-bottom:1px solid var(--line);
+    font-size:11px; letter-spacing:.18em; color:var(--muted); text-transform:uppercase;
+  }
+  .ecam-head .live{color:var(--amber)}
+  .ecam-body{padding:18px 16px 20px}
+  .ecam-body h3{
+    margin:0 0 6px; font-family:var(--display); font-weight:700;
+    text-transform:uppercase; letter-spacing:.02em; font-size:22px; color:var(--ink);
+  }
+  .ecam-body .tag{font-size:11px; letter-spacing:.18em; color:var(--accent); text-transform:uppercase}
+  .ecam-body p.desc{font-family:var(--body); color:var(--ink2); font-size:14.5px; margin:10px 0 16px}
+  .ecam-row{
+    display:flex; align-items:baseline; gap:8px; font-size:13px;
+    padding:5px 0; color:var(--ink2);
+  }
+  .ecam-row .k{white-space:nowrap; text-transform:uppercase; font-size:11px; letter-spacing:.1em}
+  .ecam-row .leader{flex:1; border-bottom:1px dotted var(--line); transform:translateY(-3px)}
+  .ecam-row .v{color:var(--ink); font-weight:600; white-space:nowrap}
+  .ecam-nav{display:flex; gap:8px; padding:0 16px 16px}
+  .ecam-nav button{
+    flex:1; background:none; border:1px solid var(--line); border-radius:4px;
+    font-family:var(--mono); font-size:11px; letter-spacing:.12em; padding:7px 0; color:var(--ink2);
+  }
+  .ecam-nav button:hover{border-color:var(--accent); color:var(--ink)}
+
+  /* ── Cifras ────────────────────────────────────────────────────────────── */
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px}
+  .tile{
+    border:1px solid var(--line); border-radius:8px; background:var(--surface);
+    padding:22px 20px 18px; position:relative;
+  }
+  .tile .label{
+    font-family:var(--mono); font-size:11px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 10px;
+  }
+  .tile .value{
+    font-family:var(--display); font-weight:700; font-size:44px; line-height:1;
+    color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:0;
+  }
+  .tile .unit{font-size:20px; color:var(--accent); margin-left:4px}
+  .tile .note{font-size:13px; color:var(--ink2); margin:10px 0 0}
+
+  /* ── Gráficos de barras ────────────────────────────────────────────────── */
+  .panel{
+    border:1px solid var(--line); border-radius:8px; background:var(--surface);
+    box-shadow:var(--shadow); padding:24px; overflow-x:auto;
+  }
+  .metric-toggle{display:flex; flex-wrap:wrap; gap:8px; margin:0 0 26px}
+  .metric-toggle button{
+    background:none; border:1px solid var(--line); border-radius:999px;
+    font-family:var(--mono); font-size:12px; letter-spacing:.1em;
+    padding:7px 16px; color:var(--ink2);
+  }
+  .metric-toggle button:hover{border-color:var(--accent); color:var(--ink)}
+  .metric-toggle button[aria-pressed="true"]{
+    background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:700;
+  }
+  .chart{min-width:520px}
+  .crow{display:grid; grid-template-columns:150px 1fr; gap:14px; align-items:center; padding:7px 0}
+  .crow .name{
+    font-family:var(--mono); font-size:13px; color:var(--ink2); text-align:right;
+    white-space:nowrap;
+  }
+  .crow.is-hero .name{color:var(--ink); font-weight:700}
+  .crow .track{display:block; position:relative; height:26px; background:none}
+  .crow .bar{
+    display:block; height:100%; border-radius:0 4px 4px 0;
+    background:var(--bar-other); min-width:2px;
+    transition:width .7s cubic-bezier(.22,.9,.35,1);
+    border-left:2px solid var(--line);
+  }
+  .crow.is-hero .bar{background:var(--bar-main); border-left-color:var(--accent)}
+  .crow .val{
+    position:absolute; left:calc(var(--w) + 10px); top:50%; transform:translateY(-50%);
+    font-family:var(--mono); font-size:13px; color:var(--ink); font-weight:600;
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+    transition:left .7s cubic-bezier(.22,.9,.35,1);
+  }
+  .axis-note{
+    margin:18px 0 0; font-family:var(--mono); font-size:11px;
+    letter-spacing:.1em; color:var(--muted); text-transform:uppercase;
+  }
+
+  /* tooltip flotante */
+  #tip{
+    position:fixed; z-index:90; pointer-events:none; opacity:0;
+    background:var(--ink); color:var(--bg);
+    font-family:var(--mono); font-size:12px; line-height:1.5;
+    padding:8px 12px; border-radius:6px; max-width:260px;
+    transform:translate(-50%,calc(-100% - 12px));
+    transition:opacity .12s ease;
+    box-shadow:0 6px 24px rgba(0,0,0,.3);
+  }
+  #tip.on{opacity:1}
+  #tip b{color:inherit}
+
+  /* ── Cronología ────────────────────────────────────────────────────────── */
+  .timeline{position:relative; margin-top:10px}
+  .timeline::before{
+    content:""; position:absolute; left:96px; top:0; bottom:0;
+    border-left:1px dashed var(--line);
+  }
+  .tl-item{
+    display:grid; grid-template-columns:76px 40px 1fr; gap:0;
+    padding:16px 0; opacity:0; transform:translateY(14px);
+    transition:opacity .5s ease, transform .5s ease;
+  }
+  .tl-item.in{opacity:1; transform:none}
+  .tl-item .year{
+    font-family:var(--mono); font-size:15px; font-weight:700; color:var(--amber);
+    text-align:right; padding-top:2px; font-variant-numeric:tabular-nums;
+  }
+  .tl-item .node{position:relative}
+  .tl-item .node::before{
+    content:""; position:absolute; left:16px; top:8px; width:9px; height:9px;
+    border-radius:50%; background:var(--bg); border:2px solid var(--accent);
+  }
+  .tl-item.key .node::before{background:var(--accent)}
+  .tl-item h3{
+    margin:0 0 4px; font-family:var(--display); font-weight:700;
+    text-transform:uppercase; font-size:19px; letter-spacing:.02em;
+  }
+  .tl-item p{margin:0; color:var(--ink2); font-size:14.5px; max-width:62ch}
+  @media (max-width:640px){
+    .timeline::before{left:64px}
+    .tl-item{grid-template-columns:48px 36px 1fr}
+    .tl-item .year{font-size:13px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    .tl-item{opacity:1; transform:none; transition:none}
+    .crow .bar,.crow .val{transition:none}
+    .hotspot::after{animation:none}
+  }
+
+  /* ── Epílogo / pie ─────────────────────────────────────────────────────── */
+  .outro p{max-width:66ch; color:var(--ink2)}
+  .outro p b{color:var(--ink)}
+  footer{
+    border-top:1px solid var(--line); padding:28px 0 40px;
+    font-family:var(--mono); font-size:12px; letter-spacing:.1em; color:var(--muted);
+  }
+  footer .wrap{display:flex; flex-wrap:wrap; gap:12px 32px; justify-content:space-between}
+</style>
+
+<header class="top">
+  <div class="topbar">
+    <span class="brand"><b>A380</b> · GUÍA INTERACTIVA</span>
+    <button id="themeBtn" type="button" aria-label="Cambiar tema">TEMA: AUTO</button>
+  </div>
+</header>
+
+<main>
+  <!-- ═══ HÉROE ═══ -->
+  <div class="hero">
+    <div class="wrap">
+      <p class="kicker">El último superjumbo · 2005 – 2021</p>
+      <h1>
+        <span class="airline">Airbus</span>
+        <span class="model">A<em>380</em></span>
+      </h1>
+      <p class="sub">
+        Dos cubiertas completas, cuatro motores y 853 asientos certificados:
+        el avión de pasajeros más grande jamás construido. Esta guía lo recorre
+        pieza a pieza — su anatomía, sus cifras, sus rivales y su historia.
+      </p>
+      <div class="ticker num" aria-label="Datos rápidos">
+        <span>ENVERGADURA <b>79,75 m</b></span><span class="dot">◆</span>
+        <span>LONGITUD <b>72,72 m</b></span><span class="dot">◆</span>
+        <span>MTOW <b>575 t</b></span><span class="dot">◆</span>
+        <span>CRUCERO <b>MACH 0,85</b></span><span class="dot">◆</span>
+        <span>ALCANCE <b>14.800 km</b></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ ANATOMÍA ═══ -->
+  <section id="anatomia">
+    <div class="wrap">
+      <p class="eyebrow">Anatomía</p>
+      <h2>Un edificio de ocho plantas que vuela</h2>
+      <p class="lede">
+        Pulsa sobre los puntos del plano para inspeccionar cada sección.
+        El panel de la derecha responde como una pantalla de a bordo.
+      </p>
+
+      <div class="anatomy">
+        <div class="planebox" id="planebox">
+          <svg viewBox="0 0 1000 430" role="img" aria-label="Plano lateral esquemático del Airbus A380" class="blueprint">
+            <!-- suelo -->
+            <line class="ground" x1="20" y1="392" x2="980" y2="392"/>
+            <!-- deriva (cola vertical) -->
+            <path class="hull fill" d="M 782 212 L 848 52 L 886 52 L 900 205 Z"/>
+            <!-- estabilizador horizontal -->
+            <path class="soft fill" d="M 800 296 L 900 262 L 916 268 L 842 302 Z"/>
+            <!-- fuselaje -->
+            <path class="hull fill" d="M 62 292
+              C 62 258, 84 218, 150 210
+              L 640 208
+              C 720 210, 800 224, 888 252
+              C 902 258, 902 268, 888 274
+              C 800 306, 720 322, 640 328
+              L 190 330
+              C 110 328, 62 318, 62 292 Z"/>
+            <!-- parabrisas de cabina -->
+            <path class="soft accent" d="M 96 244 L 132 238 L 138 252 L 100 257 Z"/>
+            <!-- líneas de cubiertas (ventanillas) -->
+            <line class="deck" x1="150" y1="242" x2="770" y2="240"/>
+            <line class="deck" x1="128" y1="282" x2="800" y2="282"/>
+            <!-- puertas -->
+            <line class="soft" x1="180" y1="268" x2="180" y2="296"/>
+            <line class="soft" x1="330" y1="266" x2="330" y2="296"/>
+            <line class="soft" x1="640" y1="266" x2="640" y2="296"/>
+            <line class="soft" x1="740" y1="266" x2="740" y2="292"/>
+            <!-- ala (vista lateral, cae hacia el observador) -->
+            <path class="hull fill" d="M 398 316 L 470 322 L 668 352 L 640 358 L 470 340 L 398 326 Z"/>
+            <!-- motores -->
+            <g class="soft">
+              <path d="M 468 336 L 482 352" />
+              <path d="M 560 348 L 572 360" />
+            </g>
+            <g>
+              <rect class="hull fill" x="452" y="350" width="74" height="30" rx="13"/>
+              <line class="soft accent" x1="462" y1="352" x2="462" y2="378"/>
+              <rect class="hull fill" x="548" y="358" width="66" height="27" rx="12"/>
+              <line class="soft accent" x1="557" y1="360" x2="557" y2="383"/>
+            </g>
+            <!-- tren delantero -->
+            <line class="soft" x1="150" y1="326" x2="150" y2="374"/>
+            <circle class="hull fill" cx="150" cy="380" r="9"/>
+            <!-- tren principal -->
+            <line class="soft" x1="640" y1="330" x2="640" y2="370"/>
+            <line class="soft" x1="676" y1="330" x2="676" y2="370"/>
+            <circle class="hull fill" cx="630" cy="378" r="10"/>
+            <circle class="hull fill" cx="652" cy="378" r="10"/>
+            <circle class="hull fill" cx="676" cy="378" r="10"/>
+            <!-- cota: longitud -->
+            <g>
+              <line class="dim" x1="62" y1="414" x2="900" y2="414"/>
+              <line class="dim" x1="62" y1="408" x2="62" y2="420"/>
+              <line class="dim" x1="900" y1="408" x2="900" y2="420"/>
+              <text class="dimtext" x="450" y="408" text-anchor="middle">72,72 m</text>
+            </g>
+            <!-- cota: altura -->
+            <g>
+              <line class="dim" x1="946" y1="52" x2="946" y2="392"/>
+              <line class="dim" x1="940" y1="52" x2="952" y2="52"/>
+              <line class="dim" x1="940" y1="392" x2="952" y2="392"/>
+              <text class="dimtext" x="962" y="230" text-anchor="middle" transform="rotate(90 962 230)">24,09 m</text>
+            </g>
+          </svg>
+          <!-- los botones se inyectan aquí -->
+        </div>
+
+        <div class="ecam" aria-live="polite">
+          <div class="ecam-head">
+            <span>SYS · PAGE</span><span class="live" id="ecamCode">—</span>
+          </div>
+          <div class="ecam-body" id="ecamBody"><!-- JS --></div>
+          <div class="ecam-nav">
+            <button type="button" id="prevSpot" aria-label="Sección anterior">◀ ANTERIOR</button>
+            <button type="button" id="nextSpot" aria-label="Sección siguiente">SIGUIENTE ▶</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ CIFRAS ═══ -->
+  <section class="band" id="cifras">
+    <div class="wrap">
+      <p class="eyebrow">Cifras</p>
+      <h2>La escala, en números</h2>
+      <p class="lede">Los contadores se ponen en marcha al entrar en pantalla. Cada cifra corresponde al A380-800, la única versión construida.</p>
+      <div class="tiles">
+        <div class="tile"><p class="label">Asientos certificados</p>
+          <p class="value num"><span data-count="853">0</span></p>
+          <p class="note">Límite de evacuación certificado. En servicio real: 379–615 asientos según aerolínea.</p></div>
+        <div class="tile"><p class="label">Peso máx. al despegue</p>
+          <p class="value num"><span data-count="575">0</span><span class="unit">t</span></p>
+          <p class="note">Como 460 coches compactos rodando a 280 km/h al rotar.</p></div>
+        <div class="tile"><p class="label">Combustible</p>
+          <p class="value num"><span data-count="320000">0</span><span class="unit">L</span></p>
+          <p class="note">Once depósitos, incluido uno de compensación en la cola.</p></div>
+        <div class="tile"><p class="label">Superficie de cabina</p>
+          <p class="value num"><span data-count="550">0</span><span class="unit">m²</span></p>
+          <p class="note">Un 40 % más que el Boeing 747-8. Dos pasillos en ambas cubiertas.</p></div>
+        <div class="tile"><p class="label">Ruedas</p>
+          <p class="value num"><span data-count="22">0</span></p>
+          <p class="note">2 delanteras + 20 principales en cuatro bogies.</p></div>
+        <div class="tile"><p class="label">Piezas</p>
+          <p class="value num"><span data-count="4">0</span><span class="unit">M</span></p>
+          <p class="note">Fabricadas en Francia, Alemania, Reino Unido y España; ensamblaje final en Toulouse.</p></div>
+        <div class="tile"><p class="label">Cableado</p>
+          <p class="value num"><span data-count="500">0</span><span class="unit">km</span></p>
+          <p class="note">El cableado de cada avión, puesto en línea recta, cruzaría de Madrid a Barcelona.</p></div>
+        <div class="tile"><p class="label">Empuje total</p>
+          <p class="value num"><span data-count="1244">0</span><span class="unit">kN</span></p>
+          <p class="note">Cuatro Rolls-Royce Trent 900 o Engine Alliance GP7200, ~311 kN cada uno.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ COMPARATIVA ═══ -->
+  <section id="comparativa">
+    <div class="wrap">
+      <p class="eyebrow">Comparativa</p>
+      <h2>Frente a los otros gigantes</h2>
+      <p class="lede">
+        Elige la métrica. El A380 no es el más largo — ese título es del 777-9 —
+        pero domina en todo lo demás. Pasa el cursor por las barras para ver el detalle.
+      </p>
+      <div class="panel">
+        <div class="metric-toggle" role="group" aria-label="Métrica a comparar" id="metricToggle"></div>
+        <div class="chart" id="compareChart"></div>
+        <p class="axis-note" id="compareNote"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ OPERADORES ═══ -->
+  <section class="band" id="operadores">
+    <div class="wrap">
+      <p class="eyebrow">Operadores</p>
+      <h2>251 entregas, 14 aerolíneas</h2>
+      <p class="lede">
+        Casi la mitad de todos los A380 volaron para una sola aerolínea:
+        Emirates construyó su red global entera alrededor de este avión.
+      </p>
+      <div class="panel">
+        <div class="chart" id="fleetChart"></div>
+        <p class="axis-note">Aviones entregados por Airbus a cada cliente · 2007–2021</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ CRONOLOGÍA ═══ -->
+  <section id="cronologia">
+    <div class="wrap">
+      <p class="eyebrow">Cronología</p>
+      <h2>De la apuesta al adiós</h2>
+      <p class="lede">Veintiún años entre el lanzamiento del programa y la última entrega.</p>
+      <div class="timeline" id="timeline"></div>
+    </div>
+  </section>
+
+  <!-- ═══ EPÍLOGO ═══ -->
+  <section class="band outro" id="epilogo">
+    <div class="wrap">
+      <p class="eyebrow">Epílogo</p>
+      <h2>¿Por qué se dejó de fabricar?</h2>
+      <p>
+        El A380 se diseñó para un mundo de <b>hub a hub</b>: mover masas de pasajeros
+        entre grandes aeropuertos saturados. Pero el mercado giró hacia vuelos
+        <b>punto a punto</b> con bimotores más pequeños y eficientes — el propio
+        A350 de Airbus y el 787 de Boeing — que abrían rutas directas sin llenar 500 asientos.
+      </p>
+      <p>
+        Cuando Emirates redujo su último gran pedido en febrero de 2019, Airbus anunció
+        el fin del programa. El último A380, el <b>MSN 272</b>, se entregó a Emirates
+        el 16 de diciembre de 2021.
+      </p>
+      <p>
+        Y sin embargo, la historia no terminó ahí: tras la pandemia, la demanda volvió
+        antes de que llegaran aviones nuevos, y decenas de A380 aparcados en el desierto
+        <b>regresaron al servicio</b>. El gigante seguirá cruzando océanos hasta bien
+        entrada la década de 2030.
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>A380 · GUÍA INTERACTIVA</span>
+    <span>DATOS: AIRBUS · DOMINIO PÚBLICO · CIFRAS DEL A380-800</span>
+  </div>
+</footer>
+
+<div id="tip" role="presentation"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ── Tema ── */
+  var themeBtn = document.getElementById("themeBtn");
+  var order = ["auto","light","dark"];
+  var labels = {auto:"TEMA: AUTO", light:"TEMA: DÍA", dark:"TEMA: NOCHE"};
+  var current = "auto";
+  themeBtn.addEventListener("click", function(){
+    current = order[(order.indexOf(current)+1)%order.length];
+    if(current==="auto"){ document.documentElement.removeAttribute("data-theme"); }
+    else{ document.documentElement.setAttribute("data-theme", current); }
+    themeBtn.textContent = labels[current];
+  });
+
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ── Tooltip global ── */
+  var tip = document.getElementById("tip");
+  function showTip(html, x, y){
+    tip.innerHTML = html;
+    tip.style.left = x+"px";
+    tip.style.top = y+"px";
+    tip.classList.add("on");
+  }
+  function hideTip(){ tip.classList.remove("on"); }
+
+  /* ── Anatomía: puntos calientes ── */
+  var spots = [
+    { x:112, y:248, code:"FLT DECK", name:"Cabina de vuelo",
+      desc:"Situada a media altura, entre las dos cubiertas, para mantener la vista del piloto a una altura similar a la de otros Airbus. Mandos fly-by-wire con sidestick y ocho pantallas LCD.",
+      rows:[["Tripulación técnica","2 pilotos"],["Filosofía","Fly-by-wire"],["Habilitación","Común familia Airbus"]] },
+    { x:330, y:236, code:"UPPER DK", name:"Cubierta superior",
+      desc:"La única cubierta superior de fuselaje completo en un avión comercial, con dos pasillos propios. Las aerolíneas la usaron para duchas, bares, suites y salones.",
+      rows:[["Longitud","≈ 44 m útiles"],["Pasillos","2"],["Acceso","2 escaleras (proa y popa)"]] },
+    { x:280, y:296, code:"MAIN DK", name:"Cubierta principal y bodega",
+      desc:"La cubierta más ancha de la aviación comercial: hasta 11 asientos por fila en turista. Bajo el suelo, la bodega admite 38 contenedores LD3.",
+      rows:[["Anchura de cabina","6,54 m"],["Superficie útil total","550 m²"],["Carga","38 × LD3"]] },
+    { x:600, y:330, code:"WING", name:"Alas",
+      desc:"Dimensionadas para una versión alargada (A380-900) que nunca llegó a construirse. Aun así, la envergadura se limitó a 80 m para caber en las puertas de aeropuerto estándar.",
+      rows:[["Envergadura","79,75 m"],["Superficie alar","845 m²"],["Flecha","33,5°"]] },
+    { x:490, y:364, code:"ENG", name:"Motores",
+      desc:"Cuatro turbofanes a elegir entre el Rolls-Royce Trent 900 y el Engine Alliance GP7200. Solo los dos motores interiores montan inversores de empuje: con 20 ruedas frenando, basta.",
+      rows:[["Empuje unitario","≈ 311 kN"],["Diámetro del fan","2,95 m"],["Inversores","Solo motores 2 y 3"]] },
+    { x:652, y:378, code:"L/G", name:"Tren de aterrizaje",
+      desc:"Veintidós ruedas reparten 575 toneladas: dos en el tren de morro y veinte en cuatro bogies principales. El bogie central de seis ruedas gira para no arrastrar en las curvas.",
+      rows:[["Ruedas","22"],["Peso máx. despegue","575 t"],["Velocidad de aterrizaje","≈ 250 km/h"]] },
+    { x:855, y:110, code:"TAIL", name:"Cola",
+      desc:"La deriva se alza 24,09 m sobre la pista, la altura de un edificio de ocho plantas. El estabilizador horizontal, de fibra de carbono, esconde un depósito de combustible de compensación.",
+      rows:[["Altura total","24,09 m"],["Material","CFRP"],["Depósito de cola","Trimado en vuelo"]] }
+  ];
+
+  var planebox = document.getElementById("planebox");
+  var ecamBody = document.getElementById("ecamBody");
+  var ecamCode = document.getElementById("ecamCode");
+  var active = 0;
+
+  spots.forEach(function(s, i){
+    var b = document.createElement("button");
+    b.className = "hotspot";
+    b.type = "button";
+    b.textContent = i+1;
+    b.setAttribute("aria-pressed","false");
+    b.setAttribute("aria-label", s.name);
+    b.style.left = (s.x/1000*100)+"%";
+    b.style.top = (s.y/430*100)+"%";
+    b.addEventListener("click", function(){ select(i); });
+    planebox.appendChild(b);
+    s.btn = b;
+  });
+
+  function select(i){
+    active = (i+spots.length)%spots.length;
+    spots.forEach(function(s,j){ s.btn.setAttribute("aria-pressed", j===active ? "true":"false"); });
+    var s = spots[active];
+    ecamCode.textContent = s.code;
+    var rows = s.rows.map(function(r){
+      return '<div class="ecam-row"><span class="k">'+r[0]+'</span><span class="leader"></span><span class="v num">'+r[1]+'</span></div>';
+    }).join("");
+    ecamBody.innerHTML =
+      '<span class="tag">'+(active+1)+' / '+spots.length+'</span>'+
+      '<h3>'+s.name+'</h3>'+
+      '<p class="desc">'+s.desc+'</p>'+ rows;
+  }
+  document.getElementById("prevSpot").addEventListener("click", function(){ select(active-1); });
+  document.getElementById("nextSpot").addEventListener("click", function(){ select(active+1); });
+  select(0);
+
+  /* ── Contadores ── */
+  var fmt = new Intl.NumberFormat("es-ES");
+  function runCounter(el){
+    var target = +el.getAttribute("data-count");
+    if(reduced){ el.textContent = fmt.format(target); return; }
+    var t0 = null, dur = 1400;
+    function step(t){
+      if(!t0) t0 = t;
+      var p = Math.min((t-t0)/dur, 1);
+      p = 1-Math.pow(1-p,3);
+      el.textContent = fmt.format(Math.round(target*p));
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  var counted = new WeakSet();
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting && !counted.has(e.target)){
+        counted.add(e.target); runCounter(e.target); io.unobserve(e.target);
+      }
+    });
+  }, {threshold:.6});
+  document.querySelectorAll("[data-count]").forEach(function(el){ io.observe(el); });
+
+  /* ── Comparativa ── */
+  var planes = [
+    { name:"Airbus A380-800", hero:true,
+      pax:525, mtow:575, span:79.75, len:72.72,
+      tip:"<b>A380-800</b><br>Doble cubierta completa · 4 motores<br>En servicio desde 2007" },
+    { name:"Boeing 747-8I", hero:false,
+      pax:467, mtow:447.7, span:68.4, len:76.25,
+      tip:"<b>747-8 Intercontinental</b><br>Cubierta superior parcial · 4 motores<br>El 'Jumbo' original, estirado" },
+    { name:"Boeing 777-9", hero:false,
+      pax:426, mtow:351.5, span:71.75, len:76.72,
+      tip:"<b>777-9</b><br>El avión comercial más largo<br>2 motores · puntas de ala plegables" },
+    { name:"Airbus A350-1000", hero:false,
+      pax:369, mtow:322, span:64.75, len:73.79,
+      tip:"<b>A350-1000</b><br>2 motores · fuselaje de carbono<br>El relevo eficiente del A380" }
+  ];
+  var metrics = {
+    pax:  { label:"Pasajeros",   unit:"asientos (3 clases)", dec:0 },
+    mtow: { label:"Peso máximo", unit:"toneladas al despegue", dec:1 },
+    span: { label:"Envergadura", unit:"metros", dec:2 },
+    len:  { label:"Longitud",    unit:"metros", dec:2 }
+  };
+  var metricKeys = Object.keys(metrics);
+  var activeMetric = "pax";
+
+  var toggle = document.getElementById("metricToggle");
+  metricKeys.forEach(function(k){
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = metrics[k].label.toUpperCase();
+    b.setAttribute("aria-pressed", k===activeMetric ? "true":"false");
+    b.addEventListener("click", function(){
+      activeMetric = k;
+      toggle.querySelectorAll("button").forEach(function(x,i){
+        x.setAttribute("aria-pressed", metricKeys[i]===k ? "true":"false");
+      });
+      renderCompare();
+    });
+    toggle.appendChild(b);
+  });
+
+  var compareChart = document.getElementById("compareChart");
+  var compareNote = document.getElementById("compareNote");
+  var fmtDec = function(v,d){ return fmt.format(+v.toFixed(d)); };
+
+  function bindTip(el, html){
+    el.addEventListener("mousemove", function(ev){ showTip(html, ev.clientX, ev.clientY); });
+    el.addEventListener("mouseleave", hideTip);
+  }
+
+  function renderCompare(){
+    var m = metrics[activeMetric];
+    var max = Math.max.apply(null, planes.map(function(p){ return p[activeMetric]; }));
+    compareChart.innerHTML = "";
+    planes.forEach(function(p){
+      var w = (p[activeMetric]/max*72).toFixed(2)+"%";
+      var row = document.createElement("div");
+      row.className = "crow"+(p.hero?" is-hero":"");
+      row.innerHTML =
+        '<span class="name">'+p.name+'</span>'+
+        '<span class="track" style="--w:'+w+'">'+
+          '<span class="bar" style="width:'+w+'"></span>'+
+          '<span class="val num">'+fmtDec(p[activeMetric], m.dec)+'</span>'+
+        '</span>';
+      bindTip(row.querySelector(".track"), p.tip+"<br>"+m.label+": <b>"+fmtDec(p[activeMetric],m.dec)+"</b> "+m.unit);
+      compareChart.appendChild(row);
+    });
+    compareNote.textContent = m.label.toUpperCase()+" · "+m.unit.toUpperCase();
+  }
+  renderCompare();
+
+  /* ── Operadores ── */
+  var fleet = [
+    ["Emirates",123],["Singapore Airlines",24],["Lufthansa",14],
+    ["British Airways",12],["Qantas",12],["Air France",10],
+    ["Etihad Airways",10],["Korean Air",10],["Qatar Airways",10],
+    ["Asiana Airlines",6],["Malaysia Airlines",6],["Thai Airways",6],
+    ["China Southern",5],["ANA",3]
+  ];
+  var fleetChart = document.getElementById("fleetChart");
+  var fMax = fleet[0][1];
+  fleet.forEach(function(f){
+    var pct = Math.round(f[1]/251*1000)/10;
+    var w = (f[1]/fMax*72).toFixed(2)+"%";
+    var row = document.createElement("div");
+    row.className = "crow is-hero";
+    row.innerHTML =
+      '<span class="name">'+f[0]+'</span>'+
+      '<span class="track" style="--w:'+w+'">'+
+        '<span class="bar" style="width:'+w+'"></span>'+
+        '<span class="val num">'+f[1]+'</span>'+
+      '</span>';
+    bindTip(row.querySelector(".track"),
+      "<b>"+f[0]+"</b><br>"+f[1]+" aviones · "+fmt.format(pct).replace(".",",")+" % de la flota mundial");
+    fleetChart.appendChild(row);
+  });
+
+  /* ── Cronología ── */
+  var events = [
+    {y:"2000", key:true,  t:"Lanzamiento del programa",
+     p:"Airbus aprueba en diciembre el mayor proyecto de su historia, hasta entonces llamado A3XX: un avión de doble cubierta para destronar al Boeing 747."},
+    {y:"2005", key:true,  t:"Presentación y primer vuelo",
+     p:"El 18 de enero se presenta en Toulouse ante 5.000 invitados. El 27 de abril despega por primera vez, con seis tripulantes y lastre de ensayo a bordo."},
+    {y:"2006", key:false, t:"La crisis del cableado",
+     p:"Los 500 km de cables por avión, diseñados con versiones incompatibles de CATIA entre plantas, fuerzan dos años de retrasos y una reorganización de Airbus."},
+    {y:"2007", key:true,  t:"Primer vuelo comercial",
+     p:"El 25 de octubre, Singapore Airlines opera el SQ380 entre Singapur y Sídney. Los billetes del vuelo inaugural se subastan con fines benéficos."},
+    {y:"2008", key:false, t:"Llega Emirates",
+     p:"La aerolínea de Dubái recibe su primer A380 en agosto. Acabará operando 123, la mitad de todos los construidos, con duchas y bar a bordo."},
+    {y:"2014", key:false, t:"Techo comercial",
+     p:"El programa alcanza el equilibrio de caja anual con 30 entregas, pero no llegan pedidos nuevos: las aerolíneas prefieren bimotores de largo radio."},
+    {y:"2019", key:true,  t:"Anuncio del fin",
+     p:"Emirates recorta su pedido y Airbus anuncia en febrero el cierre de la línea de producción. Se construirán 251 aviones de los 1.200 que se llegaron a proyectar."},
+    {y:"2021", key:true,  t:"Última entrega",
+     p:"El 16 de diciembre, el MSN 272 vuela de Hamburgo a Dubái con librea de Emirates. Es el A380 número 251 y último."},
+    {y:"2022", key:false, t:"El regreso",
+     p:"La demanda pospandemia vuelve antes que los aviones nuevos: British Airways, Lufthansa, Qantas y otras reactivan sus A380 aparcados en el desierto."}
+  ];
+  var tl = document.getElementById("timeline");
+  events.forEach(function(e){
+    var d = document.createElement("div");
+    d.className = "tl-item"+(e.key?" key":"");
+    d.innerHTML = '<span class="year">'+e.y+'</span><span class="node"></span>'+
+      '<div><h3>'+e.t+'</h3><p>'+e.p+'</p></div>';
+    tl.appendChild(d);
+  });
+  var tio = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add("in"); tio.unobserve(e.target); }
+    });
+  }, {threshold:.25});
+  document.querySelectorAll(".tl-item").forEach(function(el){
+    if(reduced){ el.classList.add("in"); } else { tio.observe(el); }
+  });
+})();
+</script>
+</body>
+</html>
