@@ -6,7 +6,7 @@ vienen de [`especificacion.md`](especificacion.md).
 **Estados**: `Implementado` = hay codigo y test · `Manual` = implementado, se verifica con
 DOORS real · `Planificado` = hito posterior, sin codigo.
 
-Alcance de esta entrega: hitos H0 a H3. Todo lo de H4 en adelante figura como planificado.
+Alcance cubierto: hitos H0 a H7. Queda planificado H8 (Graph-RAG).
 
 ## 3.1 Acceso a DOORS y gestion de sesion
 
@@ -36,7 +36,7 @@ Alcance de esta entrega: hitos H0 a H3. Todo lo de H4 en adelante figura como pl
 |---|---|---|---|
 | RF-020 | `dxl.py::script_fetch_page`, tool `list_requirements` | `test_mcp_tools.py::test_listar_requisitos_devuelve_cursor_para_continuar` | Implementado |
 | RF-021 | `client.py::get_requirement`, tool `get_requirement` | `test_mcp_tools.py::test_un_requisito_incluye_los_campos_minimos` | Implementado |
-| RF-022 | — | Pendiente: la version actual siempre recorre el modulo completo | Planificado |
+| RF-022 | `dxl.py::_filtros_de_objeto`, `sources/fake.py` | `test_display_set.py` | Implementado |
 | RF-023 | `dxl.py::_filtros_de_objeto` | `test_dxl_generation.py`, `test_fake_source.py` | Implementado |
 | RF-024 | `dxl.py::_filtros_de_objeto` | `test_fake_source.py::test_las_filas_internas_de_tabla_se_excluyen_por_defecto` | Implementado |
 | RF-025 | `models.py::RequirementRecord.to_dict` | `test_mcp_tools.py::test_un_requisito_incluye_los_campos_minimos` | Implementado |
@@ -86,11 +86,24 @@ Alcance de esta entrega: hitos H0 a H3. Todo lo de H4 en adelante figura como pl
 
 ## 3.7 Busqueda local, embeddings y RAG (hitos H4-H8)
 
-RF-070 a RF-080: **Planificado**. Sin codigo en esta entrega. El esquema de
-[`schema.sql`](../src/doors_kb/db/schema.sql) deja sitio a la tabla FTS5 y a las de
-embeddings sin migraciones destructivas, y la clasificacion `inserted`/`updated`/`unchanged`
-que ya produce el sincronizador es la senal que RF-074 necesitara. La eleccion de proveedor
-de embeddings esta decidida en [ADR-009](adr.md).
+| ID | Modulo | Verificacion | Estado |
+|---|---|---|---|
+| RF-070 | `db/schema.sql` (`requirements_fts`), `search/lexical.py` | `test_search_lexical.py` | Implementado |
+| RF-071 | `embeddings/provider.py` | `test_embeddings.py` (transporte inyectado) | Implementado |
+| RF-072 | `embeddings/text.py::construir_texto` | `test_embeddings.py::test_solo_entran_los_atributos_configurados` | Implementado |
+| RF-073 | tabla `requirement_embeddings` (modelo + dos hashes) | `test_embeddings.py::test_cada_embedding_guarda_modelo_y_hashes` | Implementado |
+| RF-074 | `embeddings/service.py::update_index` | `test_embeddings.py::test_la_segunda_pasada_no_pide_ni_un_embedding` | Implementado |
+| RF-075 | `search/vector.py::buscar_vectorial` | `test_search_hybrid.py` | Implementado |
+| RF-076 | `search/hybrid.py::buscar_hibrida` (RRF) | `test_search_hybrid.py` | Implementado |
+| RF-077 | `repository.cargar_embeddings` (filtros en SQL) | `test_search_hybrid.py::test_los_filtros_estructurados_se_aplican_antes_de_puntuar` | Implementado |
+| RF-078 | `servers/kb_server.py` | `test_kb_server.py` | Implementado |
+| RF-079 | — | Graph-RAG: expandir contexto por trazabilidad (hito H8) | Planificado |
+| RF-080 | `--rebuild-index`, `doors-embed` | `test_search_lexical.py`, `test_cli.py` | Implementado |
+
+**Pendiente de validacion con el endpoint real**: la llamada HTTP al proveedor de embeddings
+solo se ha ejercitado con transporte inyectado y un proveedor determinista, porque el entorno
+de desarrollo no tiene salida hacia endpoints externos. El procedimiento esta en
+[`operacion_windows.md`](operacion_windows.md).
 
 ## 4. Requisitos no funcionales
 
@@ -111,7 +124,7 @@ de embeddings esta decidida en [ADR-009](adr.md).
 | RNF-013 | `sources/base.py`, `sources/fake.py` | Toda la suite corre sin DOORS ni Windows | Implementado |
 | RNF-014 | Estructura del paquete | `docs/arquitectura.md` | Implementado |
 | RNF-015 | `sync/service.py`, `dxl.py::_posicionar_cursor` | `test_sync_pagination.py::test_cada_objeto_se_visita_una_sola_vez` | Implementado |
-| RNF-016 | — | Reconstruccion de indices derivados: sin indices aun | Planificado |
+| RNF-016 | `repository.rebuild_fts_index`, `doors-sync --rebuild-index` | `test_search_lexical.py::test_el_indice_se_puede_reconstruir_desde_la_copia_local` | Implementado |
 | RNF-017 | Catalogo cerrado + `read(...)` | `test_mcp_tools.py`, `test_dxl_generation.py` | Implementado |
 
 ## Criterios de aceptacion del hito de sincronizacion
@@ -126,6 +139,18 @@ de embeddings esta decidida en [ADR-009](adr.md).
 | CA-006 | `test_sync_pagination.py::test_cada_objeto_se_visita_una_sola_vez` (coste lineal) | Implementado |
 | CA-007 | `test_sync_safety.py::test_un_atributo_inexistente_se_rechaza_antes_de_extraer_nada` | Implementado |
 
+## Definicion de terminado de la fase RAG (Anexo B de la especificacion)
+
+| Criterio | Estado |
+|---|---|
+| La copia local se sincroniza de forma reproducible y reporta su frescura | Cumplido |
+| FTS5 resuelve busquedas exactas e identificadores con latencia local baja | Cumplido |
+| Los embeddings se generan solo para requisitos nuevos o modificados y registran modelo y hash | Cumplido |
+| La busqueda semantica devuelve resultados relevantes donde no coinciden las palabras | Mecanismo cumplido; la calidad depende del proveedor real, pendiente de medir |
+| La busqueda hibrida supera o iguala a cada via por separado en un conjunto de consultas | **Pendiente**: requiere un conjunto de consultas de prueba sobre un modulo real |
+| El agente recupera requisito, atributos y trazabilidad desde la KB | Parcial: requisito y atributos si; la trazabilidad local llega con H8 |
+| Existe una politica clara de sincronizacion y el agente informa si la copia esta desactualizada | Cumplido |
+
 ## Riesgos conocidos y su estado
 
 | ID | Estado en esta entrega |
@@ -134,6 +159,6 @@ de embeddings esta decidida en [ADR-009](adr.md).
 | R-002 | Mitigado en parte: los modulos origen que no cargan se reportan en `load_failures` |
 | R-003 | Aceptado: la trazabilidad declara `oslc_links_included: false` |
 | R-004 | **Cerrado**: el MCP directo nace con cursor, no con offset |
-| R-005 | Abierto: el perfil de atributos define el hash; conviene fijarlo antes de H5 |
-| R-006 | Pendiente de H5 (decidido en ADR-009) |
-| R-007 | Mitigado: `module_freshness` distingue sincronizacion parcial de completa |
+| R-005 | Abierto y ampliado a los embeddings: cambiar el perfil de atributos regenera el indice. Mitigado con el segundo hash (ADR-013) y con un aviso cuando el perfil pide atributos no sincronizados |
+| R-006 | Mitigado: cada embedding guarda su modelo y la clave primaria lo incluye, asi que dos modelos conviven durante una migracion |
+| R-007 | **Mitigado**: todas las respuestas del servidor local y de `doors-search` incluyen la frescura, y se avisa de los modulos parciales o nunca sincronizados |

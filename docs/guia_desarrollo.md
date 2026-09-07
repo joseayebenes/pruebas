@@ -4,13 +4,13 @@
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -e ".[dev]"      # Linux/macOS: nucleo + herramientas
+.venv/bin/pip install -e ".[dev,embeddings]"   # Linux/macOS: nucleo, herramientas y numpy
 ```
 
 En la maquina con DOORS, ademas del nucleo hace falta el extra de Windows:
 
 ```powershell
-.\.venv\Scripts\python -m pip install -e ".[dev,win]"
+.\.venv\Scripts\python -m pip install -e ".[dev,win,embeddings]"
 ```
 
 ## Ejecutar las comprobaciones
@@ -18,7 +18,8 @@ En la maquina con DOORS, ademas del nucleo hace falta el extra de Windows:
 ```bash
 .venv/bin/pytest -q                       # toda la suite: no necesita DOORS ni Windows
 .venv/bin/ruff check src tests examples   # estilo e imports
-.venv/bin/python examples/demo_sync_fake.py   # recorrido narrado del sistema
+.venv/bin/python examples/demo_sync_fake.py        # recorrido narrado de la sincronizacion
+.venv/bin/python examples/demo_busqueda_hibrida.py # recorrido narrado de la busqueda
 ```
 
 Que la suite completa corra sin DOORS no es casualidad: es el requisito RNF-013 y la razon
@@ -40,13 +41,25 @@ src/doors_kb/
       com_worker.py  Hilo COM unico, timeouts, reintentos
       client.py      RequirementsSource real sobre la sesion Automation
   db/
-    schema.sql       Esquema de la copia local
-    repository.py    Persistencia, hashes, borrado logico, historial
+    schema.sql       Esquema de la copia local, indice FTS y embeddings
+    repository.py    Persistencia, hashes, borrado logico, historial, indice
   sync/service.py    Algoritmo de sincronizacion segura
+  embeddings/
+    text.py          Que texto representa a un requisito
+    provider.py      Llamada a la API de embeddings (y proveedor falso)
+    service.py       Que hay que reembeder y cuando
+  search/
+    lexical.py       FTS5 con bm25 y fragmentos citables
+    vector.py        Similitud coseno sobre los embeddings
+    hybrid.py        Fusion RRF de los dos rankings
   servers/
     response.py      Limite y recorte de las respuestas MCP
     doors_server.py  Servidor MCP directo (H1)
-  cli/sync_doors.py  Comando doors-sync
+    kb_server.py     Servidor MCP sobre la copia local (H7)
+  cli/
+    sync_doors.py    Comando doors-sync
+    embed.py         Comando doors-embed
+    search.py        Comando doors-search
 ```
 
 La regla estructural: **`db/` y `sync/` no conocen COM ni DXL**. Hablan del protocolo
@@ -91,12 +104,19 @@ tenlo en cuenta: **el perfil de atributos define el hash de contenido**. Anadir 
 cambia el hash de todos los requisitos del modulo, que pasaran a contar como `updated` en la
 siguiente pasada (riesgo R-005). Conviene fijar el perfil antes de generar embeddings.
 
-### El siguiente hito (H4, FTS5)
+### Un atributo nuevo en el texto de embedding
 
-El sitio natural es una tabla `requirements_fts` en `db/schema.sql` alimentada desde
-`repository.upsert_requirement`, y un `kb_server.py` en `servers/` que la consulte. La
-clasificacion `inserted`/`updated`/`unchanged` que ya devuelve el sincronizador es la senal
-para mantener el indice al dia sin reindexar todo.
+Se anade a `EMBEDDINGS_ATTRIBUTES`, pero **tiene que estar antes en `DOORS_SYNC_ATTRIBUTES`**:
+el texto de embedding solo puede usar atributos que la copia local contenga. Si no lo esta,
+el servicio avisa por log en lugar de aplicarlo en silencio. Cambiar este perfil regenera
+todos los embeddings del modulo (ADR-013), lo que con un proveedor de pago tiene coste.
+
+### El siguiente hito (H8, Graph-RAG)
+
+La tabla `links` ya existe en el esquema y el cliente de DOORS sabe leer trazabilidad
+(`get_links`). Falta sincronizarla y anadir una expansion que, partiendo de los resultados de
+`buscar_hibrida`, siga los enlaces para aportar contexto relacionado (RF-079). El sitio
+natural es un modulo nuevo en `search/`, sin tocar los tres modos actuales.
 
 ## Que se prueba y que no
 
@@ -106,6 +126,7 @@ para mantener el indice al dia sin reindexar todo.
 | Reglas de sincronizacion segura y cursor | Rendimiento por pagina en un modulo grande (CA-001, CA-006) |
 | Generacion y escapado de DXL | Comportamiento de la sesion Automation y el login |
 | Timeouts, envenenamiento y reintentos del worker | Trazabilidad entrante con permisos reales |
-| Catalogo MCP, anotaciones y limites de respuesta | |
+| Catalogo MCP, anotaciones y limites de respuesta | La llamada real a la API de embeddings |
+| Indice FTS, generacion incremental y fusion de rankings | La calidad semantica del modelo elegido |
 
 Lo de la derecha se verifica siguiendo [`operacion_windows.md`](operacion_windows.md).

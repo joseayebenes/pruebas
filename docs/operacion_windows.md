@@ -76,7 +76,59 @@ Consulta del historial:
 sqlite3 .\doors_kb.sqlite3 "SELECT status, requirements_seen, inserted, updated, unchanged, deleted, completed_module, error FROM sync_runs ORDER BY id DESC LIMIT 5;"
 ```
 
-## 5. Usar el servidor MCP desde VS Code
+## 5. Busqueda local: indice y embeddings
+
+El indice textual se mantiene solo: cada `doors-sync` lo deja al dia. Si hiciera falta
+rehacerlo (por ejemplo tras cambiar de tokenizador), no hay que volver a consultar DOORS:
+
+```powershell
+.\.venv\Scripts\doors-sync --rebuild-index --module "/Proyecto/Requisitos/Modulo" --db .\doors_kb.sqlite3
+```
+
+Los embeddings si son un paso aparte, porque tienen coste. Primero conviene comprobar el
+mecanismo sin gastar llamadas:
+
+```powershell
+.\.venv\Scripts\doors-embed --module "..." --db .\doors_kb.sqlite3 --provider fake
+```
+
+### Validar el endpoint real de embeddings
+
+**Esto no se ha podido probar durante el desarrollo**: el entorno de desarrollo no tiene
+salida hacia endpoints externos, asi que el cliente HTTP se ejercito con un transporte
+inyectado. Es el equivalente, para la capa de embeddings, de lo que la capa COM tiene con
+DOORS. La primera ejecucion contra el proveedor real es una validacion pendiente.
+
+```powershell
+$env:EMBEDDINGS_BASE_URL = "https://mi-proveedor/v1"
+$env:EMBEDDINGS_API_KEY  = "..."
+$env:EMBEDDINGS_MODEL    = "nombre-del-modelo"
+
+.\.venv\Scripts\doors-embed --module "/Proyecto/Requisitos/Modulo" --db .\doors_kb.sqlite3
+```
+
+Que comprobar, en este orden:
+
+| Comprobacion | Que confirma |
+|---|---|
+| La primera ejecucion devuelve `generated` igual al numero de requisitos | La llamada funciona y la respuesta se asocia bien |
+| La **segunda** ejecucion devuelve `generated: 0` y `skipped: N` | RF-074: no se paga dos veces por lo mismo |
+| Editar un requisito en DOORS, sincronizar y volver a embeder da `generated: 1` | La deteccion incremental llega hasta el indice |
+| `doors-search --mode semantic` devuelve resultados sensatos | El modelo elegido sirve para este corpus |
+
+Si el proveedor limita el tamano de peticion, baja `EMBEDDINGS_BATCH_SIZE`. Si corta por
+tiempo, sube `EMBEDDINGS_TIMEOUT_SECONDS`.
+
+### Confirmar el predicado de visibilidad (RF-022)
+
+El recorrido por *display set* genera `isVisible(o)` en el DXL. **Conviene confirmar que ese
+es el nombre en la version de DOORS instalada** antes de fiarse del filtrado: si el
+interprete DXL da un error de funcion desconocida al llamar a `list_requirements` con
+`respect_display_set`, el predicado hay que ajustarlo en
+`src/doors_kb/sources/doors/dxl.py::_filtros_de_objeto`. El resto de las consultas no se ve
+afectado, porque el filtro solo se genera cuando se pide.
+
+## 6. Usar los servidores MCP desde VS Code
 
 ```json
 {
@@ -98,6 +150,11 @@ sqlite3 .\doors_kb.sqlite3 "SELECT status, requirements_seen, inserted, updated,
 
 Orden de uso recomendado para el agente: `doors_configuration` -> `start_doors_session`
 (el usuario se autentica) -> `doors_status` -> `list_object_attributes` -> consultas.
+
+El servidor local (`doors-kb`) se configura aparte y no necesita DOORS abierto; la
+configuracion completa de ambos esta en el README. La pauta util es: **buscar en la copia
+local y verificar en DOORS** cuando el dato tenga que estar al dia. Cada respuesta del
+servidor local incluye `freshness` precisamente para poder tomar esa decision.
 
 ---
 
@@ -159,3 +216,27 @@ cualquier `print` corrompe la sesion. Los logs del proyecto van a stderr (RNF-00
 Es intencionado (RF-044). El campo `truncated` de la respuesta dice cuantos resultados se
 omitieron. Reduce `limit`, reduce `max_attribute_chars`, o continua el recorrido con el
 `next_cursor` que devuelve la propia respuesta.
+
+### La busqueda semantica falla con "necesita numpy"
+
+La busqueda vectorial no viene en el nucleo. Instala el extra:
+`pip install -e ".[embeddings]"`. La busqueda textual sigue funcionando sin el.
+
+### La busqueda semantica falla con "los embeddings guardados tienen N dimensiones"
+
+El indice se genero con otro modelo. Es lo que ocurre al cambiar `EMBEDDINGS_MODEL` sin
+reindexar. Vuelve a ejecutar `doors-embed`: los embeddings del modelo nuevo conviven con los
+del anterior, asi que no te quedas sin busqueda mientras se regeneran.
+
+### Un atributo del perfil de embeddings no aparece en el texto
+
+El texto de embedding solo puede usar atributos que la sincronizacion haya traido a la copia
+local. Anadelo tambien a `DOORS_SYNC_ATTRIBUTES` y vuelve a sincronizar. `doors-embed` avisa
+por log cuando detecta este caso, en lugar de aplicarlo en silencio.
+
+### El agente responde con informacion desactualizada
+
+Mira el campo `freshness` de la respuesta: dice cuando se sincronizo el modulo por ultima
+vez. Si `last_full_sync_at` esta vacio, la copia nunca completo un recorrido entero. La
+solucion es sincronizar; el aviso existe para que el agente pueda decir que no lo sabe en
+lugar de contestar con datos viejos.

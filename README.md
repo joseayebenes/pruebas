@@ -21,17 +21,24 @@ requisitos desde aqui.
 | H1 | MCP avanzado: validacion, busqueda, tipos, enlaces, multi-modulo, limites, timeouts | Implementado |
 | H2 | Persistencia SQLite: modelo local, atributos, hashes, `sync_runs` | Implementado |
 | H3 | Sincronizacion DOORS -> SQLite con cursor y borrado seguro | Implementado (pendiente validacion con DOORS real) |
-| H4-H8 | FTS5, embeddings, busqueda hibrida, MCP sobre la KB, Graph-RAG | Planificado |
+| H4 | Indice lexical FTS5 mantenido de forma incremental | Implementado |
+| H5 | Embeddings incrementales contra API compatible con OpenAI | Implementado (pendiente validacion con el endpoint real) |
+| H6 | Busqueda hibrida por fusion de rankings (RRF) | Implementado |
+| H7 | Servidor MCP sobre la copia local | Implementado |
+| H8 | Graph-RAG: expansion de contexto por trazabilidad | Planificado |
 
 ## Instalacion
 
 ```bash
 python -m venv .venv
 # Linux/macOS
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[dev,embeddings]"
 # Windows (incluye pywin32 para el acceso COM a DOORS)
-.\.venv\Scripts\python -m pip install -e ".[dev,win]"
+.\.venv\Scripts\python -m pip install -e ".[dev,win,embeddings]"
 ```
+
+El extra `embeddings` solo hace falta para la busqueda semantica e hibrida; el nucleo
+(sincronizacion, indice textual y servidor directo) funciona sin el.
 
 ## Uso rapido sin DOORS
 
@@ -39,7 +46,8 @@ El proyecto incluye una fuente falsa que reproduce la semantica de DOORS (pagina
 truncado por atributo, altas/bajas). Permite entender y probar el sistema completo sin instalar nada:
 
 ```bash
-python examples/demo_sync_fake.py
+python examples/demo_sync_fake.py        # ciclo de sincronizacion
+python examples/demo_busqueda_hibrida.py # los tres modos de busqueda
 ```
 
 ## Sincronizacion contra DOORS real
@@ -72,6 +80,32 @@ conocido, esta en [`docs/operacion_windows.md`](docs/operacion_windows.md).
 | `DOORS_SYNC_PAGE_SIZE` | `25` | Objetos por pagina DXL |
 | `DOORS_MAX_ATTRIBUTE_CHARS` | `20000` | Truncado por atributo |
 | `DOORS_SOURCE_LAST_MODIFIED_ATTRIBUTE` | *(vacio)* | Atributo del proyecto que se mapea a `source_last_modified` |
+| `EMBEDDINGS_BASE_URL` | *(vacio)* | URL base del servicio de embeddings (protocolo OpenAI) |
+| `EMBEDDINGS_API_KEY` | *(vacio)* | Clave de ese servicio. **Nunca se expone en las respuestas MCP** |
+| `EMBEDDINGS_MODEL` | *(vacio)* | Nombre del modelo de embeddings |
+| `EMBEDDINGS_ATTRIBUTES` | *(vacio)* | Atributos que entran en el texto a embeder. Solo pueden ser atributos ya sincronizados |
+| `EMBEDDINGS_BATCH_SIZE` | `32` | Textos por peticion |
+| `EMBEDDINGS_TIMEOUT_SECONDS` | `60` | Timeout de cada peticion al proveedor |
+
+## Busqueda local
+
+Una vez sincronizado el modulo, la copia local se consulta sin tocar DOORS:
+
+```bash
+doors-embed  --module "/Proyecto/Requisitos/Modulo" --db ./doors_kb.sqlite3
+doors-search --module "/Proyecto/Requisitos/Modulo" --db ./doors_kb.sqlite3 \
+             --mode hybrid "cuanto tarda en cerrarse la conexion"
+```
+
+| Modo | Para que sirve | Necesita embeddings |
+|---|---|---|
+| `lexical` | Identificadores, codigos y terminos exactos | No |
+| `semantic` | Preguntas conceptuales y parafrasis | Si |
+| `hybrid` | Cuando no sabes cual encaja mejor | Si |
+
+`doors-embed` solo genera lo que falta: una segunda ejecucion sin cambios no hace ninguna
+llamada al proveedor. Si el indice se corrompe, `doors-sync --rebuild-index` lo rehace desde
+la copia local, sin volver a consultar DOORS.
 
 ## Configuracion MCP en VS Code
 
@@ -88,10 +122,26 @@ conocido, esta en [`docs/operacion_windows.md`](docs/operacion_windows.md).
         "DOORS_DXL_TIMEOUT_SECONDS": "90",
         "DOORS_HARD_MAX_RESPONSE_CHARS": "500000"
       }
+    },
+    "doors-kb": {
+      "type": "stdio",
+      "command": "C:\\proyecto\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "doors_kb.servers.kb_server"],
+      "env": {
+        "DOORS_MODULE_PATH": "/Proyecto/Requisitos/Modulo",
+        "DOORS_DB_PATH": "C:\\proyecto\\doors_kb.sqlite3",
+        "EMBEDDINGS_BASE_URL": "https://mi-proveedor/v1",
+        "EMBEDDINGS_MODEL": "nombre-del-modelo",
+        "EMBEDDINGS_API_KEY": "..."
+      }
     }
   }
 }
 ```
+
+Los dos servidores son complementarios: `doors-kb` es rapido y no necesita DOORS abierto,
+pero responde con la ultima sincronizacion, asi que cada respuesta suya indica su frescura;
+`doors` da el estado vivo. Lo habitual es buscar en el primero y verificar en el segundo.
 
 ## Documentacion
 

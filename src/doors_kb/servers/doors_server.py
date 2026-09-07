@@ -68,7 +68,7 @@ def crear_servidor(settings: Settings | None = None, cliente: DoorsComClient | N
             "nombres deben coincidir exactamente. Las consultas grandes se recorren con "
             "'cursor', no con offset."
         ),
-        version="0.3.0",
+        version="0.4.0",
     )
 
     def responder(datos: dict[str, Any]) -> str:

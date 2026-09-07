@@ -2,6 +2,20 @@
 
 El proyecto avanza por hitos. Cada entrada resume que aporta el hito y a que requisitos responde.
 
+## [0.4.0] — Hitos H4 a H7: busqueda local
+
+- Indice lexical FTS5 mantenido de forma incremental desde la clasificacion por hash, con
+  reconstruccion sin consultar DOORS (RF-070, RNF-016).
+- Embeddings incrementales contra una API compatible con OpenAI, con dos hashes por
+  embedding para detectar tambien los cambios de perfil de atributos (RF-071 a RF-074).
+- Busqueda vectorial con filtros estructurados aplicados antes de puntuar, y busqueda
+  hibrida por fusion de rankings RRF (RF-075 a RF-077).
+- Servidor MCP `doors-kb` sobre la copia local; todas sus respuestas informan de la frescura
+  (RF-078, riesgo R-007).
+- Recorrido opcional por display set en las consultas, prohibido al sincronizar (RF-022,
+  ADR-012).
+- Comandos `doors-embed` y `doors-search`.
+
 ## [0.3.0] — Hito H3: sincronizacion DOORS -> SQLite
 
 - Servicio de sincronizacion con paginacion por cursor y marcado seguro de ausentes (RF-055..062).

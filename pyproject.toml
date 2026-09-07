@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "doors-kb"
-version = "0.3.0"
+version = "0.4.0"
 description = "MCP de solo lectura y base de conocimiento local para IBM DOORS Classic"
 readme = "README.md"
 requires-python = ">=3.11"

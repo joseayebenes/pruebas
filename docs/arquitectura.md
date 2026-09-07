@@ -55,7 +55,14 @@ esta preparado para recibirlas sin migraciones destructivas.
 | `sources/doors/dxl.py` | Generar y escapar scripts DXL (codigo puro, sin COM) | — |
 | `sources/doors/com_worker.py` | Serializar COM en un hilo, timeouts, reintentos, bloqueo | `pywin32` (perezoso) |
 | `sources/doors/client.py` | `RequirementsSource` real sobre la sesion Automation | `dxl`, `com_worker` |
-| `db/repository.py` | Persistencia SQLite, hashes, borrado logico, historial | `sqlite3`, `models` |
+| `db/repository.py` | Persistencia SQLite, hashes, borrado logico, indice FTS, embeddings | `sqlite3`, `models` |
+| `search/lexical.py` | Busqueda FTS5 con bm25 y fragmentos citables | `db` |
+| `search/vector.py` | Similitud coseno sobre los embeddings guardados | `numpy`, `db` |
+| `search/hybrid.py` | Fusion RRF de los dos rankings | `search/lexical`, `search/vector` |
+| `embeddings/text.py` | Que texto representa a un requisito | — |
+| `embeddings/provider.py` | Llamada a la API de embeddings (protocolo OpenAI) | `urllib` |
+| `embeddings/service.py` | Que hay que reembeder y cuando | `embeddings`, `db` |
+| `servers/kb_server.py` | Tools MCP sobre la copia local | `mcp`, `search`, `db` |
 | `sync/service.py` | Orquestar paginas y aplicar las reglas de sincronizacion segura | `sources/base`, `db` |
 | `servers/doors_server.py` | Exponer tools MCP de solo lectura sobre DOORS | `mcp`, `sources` |
 | `cli/sync_doors.py` | Entrada por linea de comandos de la sincronizacion | `sync`, `db`, `sources` |
@@ -154,3 +161,53 @@ Toda respuesta pasa por un unico envoltorio que serializa a JSON y aplica el lim
 
 Nunca se devuelve una respuesta truncada en silencio: el agente debe poder distinguir "no hay mas
 resultados" de "hay mas, pero no caben" (RF-043, RF-044).
+
+
+## 7. Los tres modos de busqueda
+
+Ninguno consulta DOORS: los tres trabajan sobre la copia local.
+
+| Modo | Acierta en | Falla en | Coste |
+|---|---|---|---|
+| Lexical (FTS5) | Identificadores, codigos, terminos tecnicos exactos | Lo descrito con otras palabras | Nulo |
+| Semantico | Preguntas conceptuales, sinonimos, parafrasis | Codigos literales y numeros exactos | Una llamada a la API por consulta |
+| Hibrido | Lo que encuentre cualquiera de los dos | — | La del semantico |
+
+La fusion es **RRF** sobre las *posiciones* de cada ranking, no sobre sus puntuaciones. bm25
+devuelve valores negativos sin escala fija y la similitud coseno va de -1 a 1: combinarlas
+directamente exigiria normalizaciones arbitrarias que habria que recalibrar con cada corpus.
+Las posiciones son comparables sin calibrar nada.
+
+```text
+   consulta
+      |
+      +--> FTS5      -> [ #12, #7, #40, ... ]   posicion 1, 2, 3...
+      |                                            |
+      +--> vectorial -> [ #7, #40, #3, ... ]       |  score += peso / (60 + posicion)
+                                                   v
+                        ranking combinado -> [ #7 (las dos vias), #12, #40, ... ]
+```
+
+Un requisito que aparece en las dos listas suma por ambas y sube: el acuerdo entre dos
+metodos independientes es senal. Cada resultado indica por que aparece y en que posicion
+quedo en cada ranking, de modo que la busqueda hibrida se pueda revisar en lugar de aceptarla
+como una caja negra.
+
+## 8. Frescura: la limitacion propia de la copia local
+
+El servidor directo responde con el estado vivo de DOORS. El local responde con la ultima
+sincronizacion, y esa diferencia tiene que ser visible: **todas** las respuestas del
+`kb_server` incluyen `freshness` (riesgo R-007).
+
+```text
+freshness: { last_sync_at, last_full_sync_at, active_requirements, synchronized }
+```
+
+Tres situaciones y como se comunican:
+
+* Modulo sincronizado por completo -> se responde con normalidad y la fecha del ultimo
+  recorrido completo.
+* Modulo sincronizado solo en parte -> se anade un aviso: puede faltar informacion.
+* Modulo nunca sincronizado -> `synchronized: false` y un aviso explicito. Sin el, cero
+  resultados por falta de datos seria indistinguible de cero resultados por ausencia real,
+  que es la forma mas facil de que un agente concluya que un requisito no existe.

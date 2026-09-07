@@ -125,3 +125,75 @@ una maquina distinta de la que habla con DOORS. Cada embedding almacenara el mod
 junto al hash de contenido, para poder detectar y rehacer indices obsoletos (RF-073).
 
 **Estado.** Decidida, **no implementada** en esta entrega (alcance H0-H3).
+
+---
+
+## ADR-010 — Tabla FTS5 propia, no de contenido externo
+
+**Decision.** El indice lexical es una tabla FTS5 autonoma alimentada desde el repositorio,
+con tokenizador `unicode61 remove_diacritics 2` y **sin** *stemming* `porter`.
+
+**Motivacion.** Las columnas de una FTS5 con `content=` deben corresponderse con columnas de
+la tabla de contenido, y aqui los atributos del proyecto viven normalizados en
+`requirement_attributes` (RF-053): no existe esa correspondencia. Sobre el tokenizador: los
+requisitos estan escritos en espanol y se escriben indistintamente con y sin tildes, asi que
+eliminar diacriticos es imprescindible; el *stemmer* `porter` es de ingles y degradaria
+justo lo que ADR-007 quiere preservar, los identificadores y el vocabulario tecnico exacto.
+
+**Consecuencias.** El texto se duplica en disco. A cambio, la actualizacion del indice es
+explicita y comprobable, y se mantiene desde la clasificacion por hash que ya produce la
+sincronizacion, sin una pasada extra. El indice es reconstruible (`--rebuild-index`), lo que
+permite cambiar de tokenizador mas adelante sin volver a consultar DOORS.
+
+---
+
+## ADR-011 — Busqueda vectorial por fuerza bruta con numpy
+
+**Decision.** La similitud se calcula multiplicando una matriz de embeddings por el vector de
+consulta, con numpy, declarado en el extra `[embeddings]` y no en el nucleo.
+
+**Motivacion.** No hay extension vectorial nativa disponible (`sqlite-vec` no lo esta), y con
+modulos de cientos a decenas de miles de objetos un producto escalar resuelve en
+milisegundos. Evita una dependencia nativa y mantiene la copia local reconstruible y
+portable. En Python puro la misma operacion tarda segundos por consulta, asi que numpy se
+exige de verdad: si falta, la busqueda semantica falla diciendo como instalarlo, en lugar de
+degradarse a algo lento sin explicar por que.
+
+**Consecuencias.** El nucleo (sincronizacion, FTS, servidor directo) sigue sin dependencias
+mas alla del SDK de MCP. Habra que revisar la estrategia si algun modulo se acerca al orden
+de 10^5 requisitos.
+
+---
+
+## ADR-012 — El display set nunca se usa al sincronizar
+
+**Decision.** RF-022 (respetar la vista visible del modulo) es una opcion **de consulta**. El
+servicio de sincronizacion la fija a "modulo completo" y no la expone.
+
+**Motivacion.** Si el recorrido de sincronizacion respetara un filtro de vista, los objetos
+ocultos por ese filtro no apareceran, y `mark_missing_as_deleted` los marcaria como
+eliminados sin que hayan desaparecido de DOORS. Seria un borrado logico masivo provocado por
+un ajuste de interfaz.
+
+**Consecuencias.** Un agente puede pedir la vista visible en `list_requirements` o
+`search_requirements`, pero no hay forma de sincronizar solo una parte filtrada de un modulo.
+Hay dos tests que fijan la regla: uno comprueba que el sincronizador nunca pide la vista, y
+otro reproduce el fallo que evita.
+
+---
+
+## ADR-013 — Dos hashes por embedding
+
+**Decision.** Cada embedding guarda el hash de contenido del requisito **y** el hash del
+texto que se embebio.
+
+**Motivacion.** El primero cumple RF-073 y dice si el requisito cambio. Pero el texto de
+embedding incluye un perfil configurable de atributos (RF-072), asi que puede cambiar sin que
+el requisito cambie: al anadir un atributo al perfil, todos los `content_hash` siguen
+iguales y el indice se quedaria obsoleto en silencio. Es el riesgo R-005 trasladado a los
+embeddings.
+
+**Consecuencias.** Cambiar el perfil regenera todos los embeddings del modulo, lo que con un
+proveedor de pago tiene coste: conviene fijar el perfil antes de indexar un repositorio
+grande. La clave primaria incluye ademas el modelo, de modo que dos modelos pueden convivir y
+se puede migrar de proveedor sin quedarse sin busqueda semantica mientras se reindexa (R-006).
