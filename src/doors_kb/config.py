@@ -78,6 +78,14 @@ class Settings:
     max_attribute_chars: int = 20_000
     source_last_modified_attribute: str = ""
 
+    # --- Embeddings (hito H5) ----------------------------------------------------------
+    embeddings_base_url: str = ""
+    embeddings_api_key: str = ""
+    embeddings_model: str = ""
+    embeddings_attributes: tuple[str, ...] = ()
+    embeddings_batch_size: int = 32
+    embeddings_timeout_seconds: int = 60
+
     @classmethod
     def from_env(cls, entorno: Mapping[str, str] | None = None) -> Settings:
         """Construye la configuracion desde el entorno (por defecto ``os.environ``)."""
@@ -100,6 +108,14 @@ class Settings:
             source_last_modified_attribute=env.get(
                 "DOORS_SOURCE_LAST_MODIFIED_ATTRIBUTE", ""
             ).strip(),
+            embeddings_base_url=env.get("EMBEDDINGS_BASE_URL", "").strip().rstrip("/"),
+            embeddings_api_key=env.get("EMBEDDINGS_API_KEY", "").strip(),
+            embeddings_model=env.get("EMBEDDINGS_MODEL", "").strip(),
+            embeddings_attributes=_leer_lista(env, "EMBEDDINGS_ATTRIBUTES", ()),
+            embeddings_batch_size=_leer_entero(env, "EMBEDDINGS_BATCH_SIZE", 32, minimo=1),
+            embeddings_timeout_seconds=_leer_entero(
+                env, "EMBEDDINGS_TIMEOUT_SECONDS", 60, minimo=1
+            ),
         )
 
     def resolve_module_path(self, module_path: str | None = None) -> str:
@@ -119,7 +135,10 @@ class Settings:
     def describe(self) -> dict[str, object]:
         """Vista serializable de la configuracion, para la tool ``doors_configuration``.
 
-        No incluye ningun secreto: son rutas, timeouts y limites.
+        **No incluye la clave de la API de embeddings**, ni ningun otro secreto. Esta vista
+        se envia al agente, que a su vez la pone en su contexto y puede reproducirla en una
+        respuesta: una clave que entra aqui se considera comprometida. Solo se informa de si
+        hay clave configurada o no, que es lo unico util para diagnosticar.
         """
         return {
             "module_path": self.module_path,
@@ -133,4 +152,9 @@ class Settings:
             "sync_page_size": self.sync_page_size,
             "max_attribute_chars": self.max_attribute_chars,
             "source_last_modified_attribute": self.source_last_modified_attribute,
+            "embeddings_base_url": self.embeddings_base_url,
+            "embeddings_model": self.embeddings_model,
+            "embeddings_attributes": list(self.embeddings_attributes),
+            "embeddings_batch_size": self.embeddings_batch_size,
+            "embeddings_api_key_configured": bool(self.embeddings_api_key),
         }

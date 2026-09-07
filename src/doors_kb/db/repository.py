@@ -16,7 +16,8 @@ Dos reglas de esta capa merecen atencion porque son sutiles y silenciosas si se 
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Iterator
+import struct
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -425,6 +426,172 @@ class SqliteRepository:
         }
 
     # -----------------------------------------------------------------------------------
+    # Embeddings (RF-071 a RF-074)
+    # -----------------------------------------------------------------------------------
+
+    def embeddings_pendientes(
+        self, module_path: str, model: str
+    ) -> list[dict[str, object]]:
+        """Requisitos vivos que necesitan embedding con este modelo (RF-074).
+
+        Devuelve los que no tienen embedding con ese modelo o cuyo ``embedding_text_hash``
+        guardado ya no coincide. Los ``unchanged`` no aparecen, que es justo lo que evita
+        pagar de nuevo por ellos en cada pasada.
+
+        La comparacion se hace contra el hash del **texto de embedding**, no contra el del
+        requisito: el perfil de atributos configurado forma parte de ese texto y puede
+        cambiar sin que el requisito cambie.
+        """
+        filas = self.conn.execute(
+            "SELECT r.*, e.embedding_text_hash AS hash_guardado"
+            "  FROM requirements r"
+            "  LEFT JOIN requirement_embeddings e"
+            "    ON e.requirement_id = r.id AND e.model = ?"
+            " WHERE r.module_path = ? AND r.is_deleted = 0"
+            " ORDER BY r.absolute_number",
+            (model, module_path),
+        ).fetchall()
+        pendientes = []
+        for fila in filas:
+            datos = self._fila_a_dict(fila)
+            datos["id"] = int(fila["id"])
+            datos["embedding_text_hash_guardado"] = fila["hash_guardado"]
+            pendientes.append(datos)
+        return pendientes
+
+    def guardar_embedding(
+        self,
+        requirement_id: int,
+        *,
+        model: str,
+        content_hash: str,
+        embedding_text_hash: str,
+        vector: Sequence[float],
+    ) -> None:
+        """Guarda o reemplaza el embedding de un requisito para un modelo."""
+        self.conn.execute(
+            "INSERT INTO requirement_embeddings"
+            " (requirement_id, model, dim, content_hash, embedding_text_hash, vector,"
+            "  created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(requirement_id, model) DO UPDATE SET"
+            "  dim = excluded.dim, content_hash = excluded.content_hash,"
+            "  embedding_text_hash = excluded.embedding_text_hash,"
+            "  vector = excluded.vector, created_at = excluded.created_at",
+            (
+                requirement_id,
+                model,
+                len(vector),
+                content_hash,
+                embedding_text_hash,
+                empaquetar_vector(vector),
+                _ahora(),
+            ),
+        )
+
+    def borrar_embeddings_de_borrados(self, module_path: str, model: str) -> int:
+        """Retira los embeddings de requisitos marcados como eliminados.
+
+        Igual que en el indice lexical: devolver en una busqueda semantica algo que ya no
+        esta en DOORS seria peor que no tenerlo indexado.
+        """
+        cursor = self.conn.execute(
+            "DELETE FROM requirement_embeddings"
+            " WHERE model = ? AND requirement_id IN ("
+            "   SELECT id FROM requirements WHERE module_path = ? AND is_deleted = 1)",
+            (model, module_path),
+        )
+        return cursor.rowcount or 0
+
+    def cargar_embeddings(
+        self,
+        model: str,
+        *,
+        module_path: str | None = None,
+        filtros_atributos: dict[str, str] | None = None,
+    ) -> list[dict[str, object]]:
+        """Carga los vectores candidatos, ya filtrados, para la busqueda vectorial.
+
+        Los filtros estructurados se aplican **aqui**, en SQL, y no despues de puntuar
+        (RF-077): filtrar un top-k ya calculado devolveria menos resultados de los pedidos,
+        o ninguno, aunque existieran coincidencias validas mas abajo en el ranking.
+        """
+        sql = [
+            "SELECT r.module_path, r.absolute_number, r.identifier, r.heading, r.text,",
+            "       e.vector, e.dim",
+            "  FROM requirement_embeddings e",
+            "  JOIN requirements r ON r.id = e.requirement_id",
+            " WHERE e.model = ? AND r.is_deleted = 0",
+        ]
+        parametros: list[object] = [model]
+        if module_path is not None:
+            sql.append("   AND r.module_path = ?")
+            parametros.append(module_path)
+        for nombre, valor in (filtros_atributos or {}).items():
+            sql.append(
+                "   AND EXISTS (SELECT 1 FROM requirement_attributes a"
+                "               WHERE a.requirement_id = r.id AND a.name = ?"
+                "                 AND a.value_text = ?)"
+            )
+            parametros += [nombre, valor]
+
+        filas = self.conn.execute("\n".join(sql), parametros).fetchall()
+        return [
+            {
+                "module_path": f["module_path"],
+                "absolute_number": int(f["absolute_number"]),
+                "identifier": f["identifier"],
+                "heading": f["heading"],
+                "text": f["text"],
+                "vector": desempaquetar_vector(f["vector"]),
+            }
+            for f in filas
+        ]
+
+    def count_embeddings(self, module_path: str, model: str) -> int:
+        return int(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM requirement_embeddings e"
+                " JOIN requirements r ON r.id = e.requirement_id"
+                " WHERE e.model = ? AND r.module_path = ?",
+                (model, module_path),
+            ).fetchone()[0]
+        )
+
+    def start_embedding_run(self, module_path: str, model: str) -> int:
+        cursor = self.conn.execute(
+            "INSERT INTO embedding_runs (module_path, model, started_at, status)"
+            " VALUES (?, ?, ?, 'running')",
+            (module_path, model, _ahora()),
+        )
+        return int(cursor.lastrowid)
+
+    def finish_embedding_run(
+        self, run_id: int, status: str, stats: dict[str, object]
+    ) -> None:
+        self.conn.execute(
+            "UPDATE embedding_runs SET finished_at = ?, status = ?, candidates = ?,"
+            " generated = ?, skipped = ?, removed = ?, error = ? WHERE id = ?",
+            (
+                _ahora(),
+                status,
+                int(stats.get("candidates", 0)),
+                int(stats.get("generated", 0)),
+                int(stats.get("skipped", 0)),
+                int(stats.get("removed", 0)),
+                stats.get("error"),
+                run_id,
+            ),
+        )
+
+    def last_embedding_run(self, module_path: str) -> dict[str, object] | None:
+        fila = self.conn.execute(
+            "SELECT * FROM embedding_runs WHERE module_path = ? ORDER BY id DESC LIMIT 1",
+            (module_path,),
+        ).fetchone()
+        return None if fila is None else dict(fila)
+
+    # -----------------------------------------------------------------------------------
     # Historial de sincronizaciones (RF-062)
     # -----------------------------------------------------------------------------------
 
@@ -470,3 +637,23 @@ class SqliteRepository:
             (module_path,),
         ).fetchone()
         return None if fila is None else dict(fila)
+
+
+# ---------------------------------------------------------------------------------------
+# Serializacion de vectores
+# ---------------------------------------------------------------------------------------
+
+
+def empaquetar_vector(vector: Sequence[float]) -> bytes:
+    """Serializa un vector como float32 little-endian.
+
+    El formato se fija explicitamente en lugar de usar el nativo de ``array``: un fichero
+    SQLite se copia entre maquinas, y un vector escrito con otro orden de bytes se leeria
+    como ruido sin dar ningun error.
+    """
+    return struct.pack(f"<{len(vector)}f", *vector)
+
+
+def desempaquetar_vector(datos: bytes) -> list[float]:
+    """Lee un vector serializado con :func:`empaquetar_vector`."""
+    return list(struct.unpack(f"<{len(datos) // 4}f", datos))

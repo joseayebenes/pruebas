@@ -107,6 +107,10 @@ class SyncError(DoorsKbError):
     """Fallo durante la sincronizacion de un modulo."""
 
 
+class EmbeddingError(DoorsKbError):
+    """Fallo al generar embeddings contra el proveedor configurado (hito H5)."""
+
+
 class ResponseTooLargeError(DoorsKbError):
     """La respuesta no cabe en el limite duro configurado ni tras truncarla (RF-044)."""
 

@@ -117,3 +117,48 @@ CREATE VIRTUAL TABLE IF NOT EXISTS requirements_fts USING fts5(
     attributes,
     tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- ---------------------------------------------------------------------------------------
+-- Embeddings (RF-071 a RF-074, hito H5)
+-- ---------------------------------------------------------------------------------------
+--
+-- Se guardan DOS hashes por embedding y no es redundancia:
+--
+--   * content_hash        -- el del requisito. Dice si el requisito cambio (RF-073).
+--   * embedding_text_hash -- el del texto que se embebio. Ese texto incluye un perfil
+--                            configurable de atributos (RF-072), asi que puede cambiar sin
+--                            que cambie el requisito. Sin este segundo hash, cambiar el
+--                            perfil dejaria el indice obsoleto en silencio.
+--
+-- La clave primaria incluye el modelo: convivir con dos modelos a la vez es lo que permite
+-- migrar de proveedor sin quedarse sin busqueda semantica mientras se reindexa (R-006).
+CREATE TABLE IF NOT EXISTS requirement_embeddings (
+    requirement_id       INTEGER NOT NULL REFERENCES requirements(id) ON DELETE CASCADE,
+    model                TEXT    NOT NULL,
+    dim                  INTEGER NOT NULL,
+    content_hash         TEXT    NOT NULL,
+    embedding_text_hash  TEXT    NOT NULL,
+    vector               BLOB    NOT NULL,
+    created_at           TEXT    NOT NULL,
+    PRIMARY KEY (requirement_id, model)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_modelo ON requirement_embeddings (model);
+
+-- Auditoria de cada generacion, en paralelo a sync_runs.
+CREATE TABLE IF NOT EXISTS embedding_runs (
+    id            INTEGER PRIMARY KEY,
+    module_path   TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    started_at    TEXT    NOT NULL,
+    finished_at   TEXT,
+    status        TEXT    NOT NULL,  -- running | success | failed
+    candidates    INTEGER NOT NULL DEFAULT 0,
+    generated     INTEGER NOT NULL DEFAULT 0,
+    skipped       INTEGER NOT NULL DEFAULT 0,
+    removed       INTEGER NOT NULL DEFAULT 0,
+    error         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_runs_modulo
+    ON embedding_runs (module_path, started_at DESC);
