@@ -172,6 +172,79 @@ class LinkRecord:
         }
 
 
+@dataclass(frozen=True)
+class AttributeValidation:
+    """Resultado de validar nombres de atributo contra el esquema del modulo (RF-012).
+
+    Se devuelve como dato en lugar de lanzar directamente porque las dos capas que lo usan
+    necesitan cosas distintas: la tool MCP ``validate_attributes`` quiere ensenar el informe
+    completo al agente (RF-013), mientras que el sincronizador quiere abortar antes de
+    escribir nada (RF-060). El segundo caso se resuelve con ``raise_if_invalid()``.
+    """
+
+    module_path: str
+    valid: dict[str, AttributeDefinition] = field(default_factory=dict)
+    unknown: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return not self.unknown
+
+    def raise_if_invalid(self) -> None:
+        """Lanza ``AttributeValidationError`` si algun nombre no existe."""
+        if self.unknown:
+            from .errors import AttributeValidationError
+
+            raise AttributeValidationError(
+                self.module_path, {k: list(v) for k, v in self.unknown.items()}
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "module_path": self.module_path,
+            "valid": [d.to_dict() for d in self.valid.values()],
+            "unknown": [
+                {"name": nombre, "suggestions": list(sug)} for nombre, sug in self.unknown.items()
+            ],
+            "ok": self.ok,
+        }
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """Una coincidencia de busqueda dentro de un requisito (RF-034).
+
+    Indica en que atributo se encontro y en que posicion, para que el agente pueda citar
+    la parte relevante sin descargarse el objeto entero.
+    """
+
+    record: RequirementRecord
+    matched_attribute: str
+    match_start: int = -1
+    match_text: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        datos = self.record.to_dict()
+        datos["match"] = {
+            "attribute": self.matched_attribute,
+            "start": self.match_start,
+            "text": self.match_text,
+        }
+        return datos
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    """Pagina de resultados de busqueda, con el mismo modelo de cursor que el recorrido."""
+
+    hits: tuple[SearchHit, ...]
+    next_cursor: int | None
+
+    @property
+    def exhausted(self) -> bool:
+        return self.next_cursor is None
+
+
 @dataclass
 class SyncStats:
     """Contadores y resultado de una sincronizacion (RF-062).
