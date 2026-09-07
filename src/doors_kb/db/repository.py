@@ -206,9 +206,12 @@ class SqliteRepository:
         contenido_igual = fila["content_hash"] == nuevo_hash
 
         if contenido_igual and not estaba_borrado:
-            # Nada que escribir salvo la constancia de que lo hemos vuelto a ver.
+            # Nada que escribir salvo la constancia de que lo hemos vuelto a ver y, si la
+            # hay, la fecha de origen: es metadato fuera del hash (RF-063), asi que puede
+            # refrescarse sin que el requisito cuente como modificado.
             conn.execute(
-                "UPDATE requirements SET last_seen_at = ? WHERE id = ?", (momento, requirement_id)
+                "UPDATE requirements SET last_seen_at = ?, source_last_modified = ? WHERE id = ?",
+                (momento, record.source_last_modified, requirement_id),
             )
             return ChangeType.UNCHANGED
 
