@@ -58,6 +58,14 @@ def construir_parser() -> argparse.ArgumentParser:
         help="Origen de datos. 'fake' usa un modulo simulado y no necesita DOORS.",
     )
     parser.add_argument(
+        "--rebuild-index",
+        action="store_true",
+        help=(
+            "Reconstruye el indice lexical desde la copia local y termina, sin consultar "
+            "DOORS. Los indices son derivados reconstruibles (RNF-016)."
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Muestra el detalle de cada pagina."
     )
     return parser
@@ -135,6 +143,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ajustes = _ajustes_desde(argumentos)
         modulo = ajustes.resolve_module_path()
+
+        if argumentos.rebuild_index:
+            # No se abre ninguna sesion de DOORS: el indice se rehace desde la copia local.
+            with SqliteRepository(ajustes.db_path) as repositorio:
+                indexados = repositorio.rebuild_fts_index(modulo)
+            print(json.dumps({"module_path": modulo, "indexed": indexados}, indent=2))
+            return 0
+
         fuente = _crear_fuente(ajustes, argumentos.source)
 
         with SqliteRepository(ajustes.db_path) as repositorio:

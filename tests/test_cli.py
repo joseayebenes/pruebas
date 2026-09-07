@@ -98,3 +98,22 @@ def test_la_ayuda_documenta_el_comando(bandera, capsys):
 
     assert salida.value.code == 0
     assert "doors-sync" in capsys.readouterr().out
+
+
+def test_reconstruir_el_indice_no_necesita_doors(tmp_path, capsys):
+    """RNF-016: el indice se rehace desde la copia local, sin abrir sesion Automation."""
+    base = tmp_path / "demo.sqlite3"
+    main(["--source", "fake", "--module", "/Demo/Reqs", "--db", str(base)])
+    capsys.readouterr()
+
+    with SqliteRepository(base) as repo:
+        repo.conn.execute("DELETE FROM requirements_fts")
+        assert repo.count_indexed("/Demo/Reqs") == 0
+
+    # Sin --source doors y sin sesion: la reconstruccion es puramente local.
+    codigo = main(["--rebuild-index", "--module", "/Demo/Reqs", "--db", str(base)])
+
+    assert codigo == 0
+    assert json.loads(capsys.readouterr().out)["indexed"] == 25
+    with SqliteRepository(base) as repo:
+        assert repo.count_indexed("/Demo/Reqs") == 25

@@ -199,6 +199,7 @@ class SqliteRepository:
                 ),
             )
             self._guardar_atributos(int(cursor.lastrowid), record)
+            self._indexar(record)
             return ChangeType.INSERTED
 
         requirement_id = int(fila["id"])
@@ -237,6 +238,7 @@ class SqliteRepository:
             ),
         )
         self._guardar_atributos(requirement_id, record)
+        self._indexar(record)
         return ChangeType.UPDATED
 
     def _guardar_atributos(self, requirement_id: int, record: RequirementRecord) -> None:
@@ -256,6 +258,88 @@ class SqliteRepository:
                 "VALUES (?, ?, ?)",
                 [(requirement_id, nombre, valor) for nombre, valor in record.attributes.items()],
             )
+
+    # -----------------------------------------------------------------------------------
+    # Indice lexical FTS5 (RF-070)
+    # -----------------------------------------------------------------------------------
+
+    def _indexar(self, record: RequirementRecord) -> None:
+        """Refresca la entrada del requisito en el indice lexical.
+
+        Se llama solo desde los caminos ``inserted`` y ``updated`` de ``upsert_requirement``:
+        la clasificacion por hash que ya hace el repositorio evita reindexar lo que no ha
+        cambiado, sin necesidad de una pasada extra sobre la base.
+        """
+        self._desindexar(record.module_path, record.absolute_number)
+        self.conn.execute(
+            "INSERT INTO requirements_fts"
+            " (module_path, absolute_number, identifier, heading, text, attributes)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                record.module_path,
+                record.absolute_number,
+                record.identifier,
+                record.heading,
+                record.text,
+                # Los atributos se indexan como un unico campo "nombre: valor" para poder
+                # buscarlos sin una columna FTS por atributo, igual que la tabla
+                # requirement_attributes evita una columna SQL por atributo (RF-053).
+                " ".join(f"{n}: {v}" for n, v in sorted(record.attributes.items())),
+            ),
+        )
+
+    def _desindexar(self, module_path: str, absolute_number: int) -> None:
+        """Retira un requisito del indice lexical."""
+        self.conn.execute(
+            "DELETE FROM requirements_fts WHERE module_path = ? AND absolute_number = ?",
+            (module_path, absolute_number),
+        )
+
+    def rebuild_fts_index(self, module_path: str | None = None) -> int:
+        """Reconstruye el indice lexical desde la copia local (RNF-016).
+
+        La base local y sus indices son derivados reconstruibles (RF-080): si el indice se
+        corrompe o cambia el tokenizador, se rehace sin volver a consultar DOORS. Devuelve
+        el numero de requisitos indexados.
+        """
+        conn = self.conn
+        if module_path is None:
+            conn.execute("DELETE FROM requirements_fts")
+            filas = conn.execute(
+                "SELECT * FROM requirements WHERE is_deleted = 0"
+            ).fetchall()
+        else:
+            conn.execute("DELETE FROM requirements_fts WHERE module_path = ?", (module_path,))
+            filas = conn.execute(
+                "SELECT * FROM requirements WHERE module_path = ? AND is_deleted = 0",
+                (module_path,),
+            ).fetchall()
+
+        for fila in filas:
+            datos = self._fila_a_dict(fila)
+            conn.execute(
+                "INSERT INTO requirements_fts"
+                " (module_path, absolute_number, identifier, heading, text, attributes)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    datos["module_path"],
+                    datos["absolute_number"],
+                    datos["identifier"],
+                    datos["heading"],
+                    datos["text"],
+                    " ".join(f"{n}: {v}" for n, v in sorted(datos["attributes"].items())),
+                ),
+            )
+        return len(filas)
+
+    def count_indexed(self, module_path: str | None = None) -> int:
+        """Numero de requisitos presentes en el indice lexical."""
+        if module_path is None:
+            consulta, parametros = "SELECT COUNT(*) FROM requirements_fts", ()
+        else:
+            consulta = "SELECT COUNT(*) FROM requirements_fts WHERE module_path = ?"
+            parametros = (module_path,)
+        return int(self.conn.execute(consulta, parametros).fetchone()[0])
 
     def mark_missing_as_deleted(self, module_path: str, seen: Iterable[int]) -> int:
         """Marca como borrados los requisitos que no aparecieron en el recorrido (RF-061).
@@ -282,6 +366,10 @@ class SqliteRepository:
             "WHERE module_path = ? AND absolute_number = ?",
             [(momento, momento, module_path, numero) for numero in desaparecidos],
         )
+        # Un requisito borrado sale del indice: seguir devolviendolo en las busquedas
+        # locales seria peor que no tenerlo indexado.
+        for numero in desaparecidos:
+            self._desindexar(module_path, numero)
         return len(desaparecidos)
 
     def get_requirement(

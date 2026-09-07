@@ -93,3 +93,27 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_modulo
     ON sync_runs (module_path, started_at DESC);
+
+-- ---------------------------------------------------------------------------------------
+-- Indice lexical FTS5 (RF-070, hito H4)
+-- ---------------------------------------------------------------------------------------
+--
+-- Es una tabla FTS5 autonoma, no una de contenido externo (content=...): las columnas de
+-- una FTS5 con contenido externo deben corresponderse con columnas de la tabla de origen, y
+-- aqui los atributos del proyecto viven normalizados en requirement_attributes, donde no
+-- hay tal correspondencia. Cuesta duplicar el texto en disco; a cambio la actualizacion es
+-- explicita y comprobable (ADR-010).
+--
+-- remove_diacritics 2 permite que "conexion" encuentre "conexión" y al reves, que es
+-- imprescindible con requisitos escritos en espanol. No se usa el stemmer porter: es de
+-- ingles y estropearia justo lo que ADR-007 quiere preservar, los identificadores y el
+-- vocabulario tecnico exacto.
+CREATE VIRTUAL TABLE IF NOT EXISTS requirements_fts USING fts5(
+    module_path      UNINDEXED,
+    absolute_number  UNINDEXED,
+    identifier,
+    heading,
+    text,
+    attributes,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
