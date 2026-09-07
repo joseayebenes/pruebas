@@ -170,11 +170,15 @@ def crear_servidor(settings: Settings | None = None, cliente: DoorsComClient | N
         max_attribute_chars: int | None = None,
         include_deleted: bool = False,
         include_table_internals: bool = False,
+        respect_display_set: bool = False,
     ) -> str:
         """Devuelve una pagina de requisitos del modulo.
 
         El recorrido avanza con 'cursor': pasa en la siguiente llamada el 'next_cursor' de
         la respuesta. Cuando 'next_cursor' es null, se llego al final del modulo.
+
+        Con 'respect_display_set' el recorrido se limita a los objetos visibles en la vista
+        actual del modulo, en lugar de recorrerlo entero.
         """
         ruta = ajustes.resolve_module_path(module_path)
         pagina = doors.fetch_page(
@@ -185,6 +189,7 @@ def crear_servidor(settings: Settings | None = None, cliente: DoorsComClient | N
             max_attribute_chars=max_attribute_chars or ajustes.max_attribute_chars,
             include_deleted=include_deleted,
             include_table_internals=include_table_internals,
+            respect_display_set=respect_display_set,
         )
         return responder(
             {
@@ -232,6 +237,7 @@ def crear_servidor(settings: Settings | None = None, cliente: DoorsComClient | N
         cursor: int | None = None,
         limit: int = 25,
         max_attribute_chars: int | None = None,
+        respect_display_set: bool = False,
     ) -> str:
         """Busca texto literal o expresion regular dentro del modulo.
 
@@ -248,6 +254,7 @@ def crear_servidor(settings: Settings | None = None, cliente: DoorsComClient | N
             cursor=cursor,
             page_size=limit,
             max_attribute_chars=max_attribute_chars or ajustes.max_attribute_chars,
+            respect_display_set=respect_display_set,
         )
         return responder(
             {

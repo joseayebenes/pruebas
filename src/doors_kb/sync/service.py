@@ -135,6 +135,11 @@ class SyncService:
                 cursor=cursor,
                 page_size=page_size,
                 max_attribute_chars=max_attribute_chars,
+                # El recorrido de sincronizacion cubre SIEMPRE el modulo completo, nunca la
+                # vista visible (ADR-012). Con un filtro activo, los objetos ocultos
+                # pareceran ausentes y mark_missing_as_deleted los marcaria como eliminados
+                # sin haberlo sido. RF-022 es una opcion de consulta, no de sincronizacion.
+                respect_display_set=False,
             )
             stats.pages += 1
 

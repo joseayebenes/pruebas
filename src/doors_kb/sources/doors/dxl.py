@@ -156,13 +156,26 @@ if (null cursorObj) {{
 """
 
 
-def _filtros_de_objeto(include_deleted: bool, include_table_internals: bool) -> str:
-    """Descarta los objetos que no son requisitos (RF-023, RF-024)."""
+def _filtros_de_objeto(
+    include_deleted: bool, include_table_internals: bool, respect_display_set: bool = False
+) -> str:
+    """Descarta los objetos que no son requisitos (RF-023, RF-024, RF-022).
+
+    ``respect_display_set`` limita el recorrido a los objetos visibles en la vista actual
+    del modulo (RF-022). Es una opcion **de consulta**: el sincronizador nunca la usa, y el
+    motivo esta en ADR-012.
+
+    Pendiente de validacion con DOORS real: el predicado de visibilidad se genera como
+    ``isVisible(o)``; conviene confirmar el nombre exacto en la version instalada antes de
+    dar por bueno el filtrado (ver docs/operacion_windows.md).
+    """
     condiciones = []
     if not include_deleted:
         condiciones.append("isDeleted(o)")
     if not include_table_internals:
         condiciones.append("table(o) || row(o) || cell(o)")
+    if respect_display_set:
+        condiciones.append("!isVisible(o)")
     if not condiciones:
         return ""
     return "    if (" + " || ".join(f"({c})" for c in condiciones) + ") { o = next(o); continue }\n"
@@ -235,6 +248,7 @@ def script_fetch_page(
     max_attribute_chars: int = 20_000,
     include_deleted: bool = False,
     include_table_internals: bool = False,
+    respect_display_set: bool = False,
     run_limit_cycles: int = 0,
 ) -> str:
     """Lee una pagina de requisitos a partir del cursor (RF-020, RF-057, RF-058).
@@ -243,6 +257,7 @@ def script_fetch_page(
     unica senal de que el modulo se ha recorrido entero, y de ella depende que el
     sincronizador pueda marcar ausentes como eliminados (RF-061).
     """
+    filtros = _filtros_de_objeto(include_deleted, include_table_internals, respect_display_set)
     return (
         build_preamble(run_limit_cycles)
         + _JSON_HELPERS
@@ -257,7 +272,7 @@ bool primero = true
 bool agotado = true
 while (!null o) {{
     if (emitidos >= {int(page_size)}) {{ agotado = false; break }}
-{_filtros_de_objeto(include_deleted, include_table_internals)}    if (!primero) {{ b += "," }}
+{filtros}    if (!primero) {{ b += "," }}
     primero = false
     ultimo = (int)(o."Absolute Number")
     b += "{{\\"absolute_number\\": " ultimo ""
@@ -319,6 +334,7 @@ def script_search(
     cursor: int | None = None,
     page_size: int = 25,
     max_attribute_chars: int = 20_000,
+    respect_display_set: bool = False,
     run_limit_cycles: int = 0,
 ) -> str:
     """Busca texto literal o expresion regular dentro del modulo (RF-030..RF-034).
@@ -347,6 +363,7 @@ def script_search(
         )
 
     nombres = ", ".join(f'"{escape_dxl_string(n)}"' for n in attributes)
+    filtros = _filtros_de_objeto(False, False, respect_display_set)
     return (
         build_preamble(run_limit_cycles)
         + _JSON_HELPERS
@@ -363,8 +380,7 @@ bool primero = true
 bool agotado = true
 while (!null o) {{
     if (emitidos >= {int(page_size)}) {{ agotado = false; break }}
-    if (isDeleted(o) || table(o) || row(o) || cell(o)) {{ o = next(o); continue }}
-    ultimo = (int)(o."Absolute Number")
+{filtros}    ultimo = (int)(o."Absolute Number")
     int j
     for (j = 0; j < {len(attributes)}; j++) {{
         string valor = o.(nombres[j]) ""

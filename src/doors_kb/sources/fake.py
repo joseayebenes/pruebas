@@ -54,6 +54,9 @@ class _ObjetoFalso:
     record: RequirementRecord
     deleted: bool = False
     table_internal: bool = False
+    visible: bool = True
+    """Visible en la vista actual del modulo. Un filtro de DOORS puede ocultarlo sin
+    borrarlo, que es la distincion que hace falta para probar RF-022."""
 
 
 @dataclass
@@ -96,6 +99,7 @@ class FakeDoorsSource:
         attributes: dict[str, str] | None = None,
         outline_number: str = "",
         table_internal: bool = False,
+        visible: bool = True,
     ) -> RequirementRecord:
         """Crea un objeto nuevo en el modulo."""
         record = RequirementRecord(
@@ -107,7 +111,9 @@ class FakeDoorsSource:
             text=text,
             attributes=dict(attributes or {}),
         )
-        self._objetos[absolute_number] = _ObjetoFalso(record, table_internal=table_internal)
+        self._objetos[absolute_number] = _ObjetoFalso(
+            record, table_internal=table_internal, visible=visible
+        )
         return record
 
     def modificar(self, absolute_number: int, **campos) -> RequirementRecord:
@@ -145,13 +151,25 @@ class FakeDoorsSource:
         self._comprobar_modulo(module_path)
         return validar_nombres(module_path, names, self.attribute_definitions)
 
-    def _ordenados(self, *, include_deleted: bool, include_table_internals: bool):
+    def ocultar(self, absolute_number: int) -> None:
+        """Saca el objeto de la vista visible sin borrarlo (simula un filtro de DOORS)."""
+        self._objetos[absolute_number].visible = False
+
+    def _ordenados(
+        self,
+        *,
+        include_deleted: bool,
+        include_table_internals: bool,
+        respect_display_set: bool = False,
+    ):
         """Recorrido del modulo en el orden en que DOORS entrega los objetos."""
         for numero in sorted(self._objetos):
             objeto = self._objetos[numero]
             if objeto.deleted and not include_deleted:
                 continue
             if objeto.table_internal and not include_table_internals:
+                continue
+            if respect_display_set and not objeto.visible:
                 continue
             yield numero, objeto
 
@@ -188,6 +206,7 @@ class FakeDoorsSource:
         max_attribute_chars: int = 20_000,
         include_deleted: bool = False,
         include_table_internals: bool = False,
+        respect_display_set: bool = False,
     ) -> RequirementPage:
         self._comprobar_modulo(module_path)
         self.validate_attributes(module_path, attributes).raise_if_invalid()
@@ -201,7 +220,9 @@ class FakeDoorsSource:
         ultimo: int | None = None
         agotado = True
         for numero, objeto in self._ordenados(
-            include_deleted=include_deleted, include_table_internals=include_table_internals
+            include_deleted=include_deleted,
+            include_table_internals=include_table_internals,
+            respect_display_set=respect_display_set,
         ):
             # El cursor es el ultimo Absolute Number visitado: se continua *despues* de el,
             # sin volver a mirar los anteriores (ADR-006).
@@ -246,6 +267,7 @@ class FakeDoorsSource:
         cursor: int | None = None,
         page_size: int = 25,
         max_attribute_chars: int = 20_000,
+        respect_display_set: bool = False,
     ) -> SearchPage:
         self._comprobar_modulo(module_path)
         self.validate_attributes(module_path, attributes).raise_if_invalid()
@@ -256,7 +278,11 @@ class FakeDoorsSource:
         hits: list[SearchHit] = []
         ultimo: int | None = None
         agotado = True
-        for numero, objeto in self._ordenados(include_deleted=False, include_table_internals=False):
+        for numero, objeto in self._ordenados(
+            include_deleted=False,
+            include_table_internals=False,
+            respect_display_set=respect_display_set,
+        ):
             if cursor is not None and numero <= cursor:
                 continue
             if len(hits) >= page_size:

@@ -54,6 +54,7 @@ class RequirementsSource(Protocol):
         max_attribute_chars: int = 20_000,
         include_deleted: bool = False,
         include_table_internals: bool = False,
+        respect_display_set: bool = False,
     ) -> RequirementPage:
         """Devuelve una pagina de requisitos a partir del cursor (RF-020, RF-057, RF-058).
 
@@ -62,7 +63,8 @@ class RequirementsSource(Protocol):
         para que el sincronizador marque ausentes como eliminados (RF-061).
 
         Los objetos borrados y las filas internas de tablas nativas se excluyen por defecto
-        (RF-023, RF-024).
+        (RF-023, RF-024). ``respect_display_set`` limita el recorrido a la vista visible del
+        modulo (RF-022); es una opcion de consulta que el sincronizador nunca usa (ADR-012).
         """
         ...
 
@@ -88,6 +90,7 @@ class RequirementsSource(Protocol):
         cursor: int | None = None,
         page_size: int = 25,
         max_attribute_chars: int = 20_000,
+        respect_display_set: bool = False,
     ) -> SearchPage:
         """Busca texto literal o expresion regular dentro del modulo (RF-030..RF-034)."""
         ...

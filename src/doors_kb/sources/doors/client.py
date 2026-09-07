@@ -222,6 +222,7 @@ class DoorsComClient:
         max_attribute_chars: int = 20_000,
         include_deleted: bool = False,
         include_table_internals: bool = False,
+        respect_display_set: bool = False,
     ) -> RequirementPage:
         """Lee una pagina de requisitos a partir del cursor (RF-020, RF-057, RF-058)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
@@ -234,6 +235,7 @@ class DoorsComClient:
                 max_attribute_chars=max_attribute_chars,
                 include_deleted=include_deleted,
                 include_table_internals=include_table_internals,
+                respect_display_set=respect_display_set,
                 run_limit_cycles=self.settings.dxl_run_limit_cycles,
             ),
             module_path,
@@ -279,6 +281,7 @@ class DoorsComClient:
         cursor: int | None = None,
         page_size: int = 25,
         max_attribute_chars: int = 20_000,
+        respect_display_set: bool = False,
     ) -> SearchPage:
         """Busca dentro de DOORS y devuelve solo las coincidencias (RF-030..RF-034)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
@@ -292,6 +295,7 @@ class DoorsComClient:
                 cursor=cursor,
                 page_size=page_size,
                 max_attribute_chars=max_attribute_chars,
+                respect_display_set=respect_display_set,
                 run_limit_cycles=self.settings.dxl_run_limit_cycles,
             ),
             module_path,
