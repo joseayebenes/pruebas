@@ -12,6 +12,15 @@ Ninguno consulta DOORS: todos trabajan sobre la copia local, que es el objetivo 
 segunda fase del proyecto.
 """
 
+from .hybrid import ResultadoHibrido, buscar_hibrida
 from .lexical import ResultadoBusqueda, buscar_lexical
+from .vector import ResultadoVectorial, buscar_vectorial
 
-__all__ = ["ResultadoBusqueda", "buscar_lexical"]
+__all__ = [
+    "ResultadoBusqueda",
+    "ResultadoHibrido",
+    "ResultadoVectorial",
+    "buscar_hibrida",
+    "buscar_lexical",
+    "buscar_vectorial",
+]

@@ -23,9 +23,14 @@ dependencies = [
 # pywin32 solo se instala en Windows; el cliente COM se importa de forma perezosa
 # para que el resto del paquete siga siendo importable en Linux/macOS.
 win = ["pywin32>=306; sys_platform == 'win32'"]
+# La busqueda vectorial multiplica una matriz de embeddings por el vector de consulta.
+# En Python puro eso son segundos por consulta; con numpy, milisegundos. Va en un extra y
+# no en el nucleo porque solo lo necesitan los hitos H5 y H6 (ADR-011).
+embeddings = ["numpy>=1.26"]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
+    "numpy>=1.26",
 ]
 
 [project.scripts]
