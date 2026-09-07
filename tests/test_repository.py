@@ -155,3 +155,50 @@ def test_una_transaccion_fallida_no_deja_escrituras_a_medias(repo):
             raise RuntimeError("corte a mitad de la pagina")
 
     assert repo.count_requirements(MODULO, include_deleted=True) == 1
+
+
+def test_el_repositorio_se_puede_usar_desde_varios_hilos(repo):
+    """El servidor MCP ejecuta cada tool en un hilo de trabajo del SDK.
+
+    Una conexion de sqlite3 esta atada por defecto al hilo que la creo, asi que sin
+    serializar el acceso el servidor local fallaba en cuanto atendia una peticion.
+    """
+    import threading
+
+    repo.upsert_requirement(_req(1))
+    errores: list[BaseException] = []
+    leidos: list[int] = []
+
+    def consultar() -> None:
+        try:
+            for _ in range(20):
+                leidos.append(repo.count_requirements(MODULO))
+        except BaseException as exc:  # noqa: BLE001 - el test necesita el fallo, no el tipo
+            errores.append(exc)
+
+    hilos = [threading.Thread(target=consultar) for _ in range(4)]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
+
+    assert errores == []
+    assert leidos == [1] * 80
+
+
+def test_las_escrituras_concurrentes_no_se_pisan(repo):
+    """Cada requisito escrito desde un hilo distinto acaba en la base, una sola vez."""
+    import threading
+
+    def escribir(inicio: int) -> None:
+        for numero in range(inicio, inicio + 25):
+            with repo.transaction():
+                repo.upsert_requirement(_req(numero))
+
+    hilos = [threading.Thread(target=escribir, args=(base,)) for base in (1, 101, 201, 301)]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
+
+    assert repo.count_requirements(MODULO) == 100

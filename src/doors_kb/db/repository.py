@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import struct
+import threading
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -36,18 +37,84 @@ def _ahora() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+class _Resultado:
+    """Resultado ya materializado de una consulta.
+
+    Las filas se leen dentro del cerrojo, no despues: devolver el cursor de sqlite3 dejaria
+    la lectura fuera de la seccion critica y otro hilo podria intercalar una escritura entre
+    la consulta y su recorrido.
+    """
+
+    __slots__ = ("_filas", "lastrowid", "rowcount")
+
+    def __init__(self, cursor: sqlite3.Cursor) -> None:
+        try:
+            self._filas = cursor.fetchall()
+        except sqlite3.ProgrammingError:
+            # Las sentencias que no devuelven filas (DDL, algunos PRAGMA) no son leibles.
+            self._filas = []
+        self.lastrowid = cursor.lastrowid
+        self.rowcount = cursor.rowcount
+
+    def fetchall(self) -> list[sqlite3.Row]:
+        return self._filas
+
+    def fetchone(self) -> sqlite3.Row | None:
+        return self._filas[0] if self._filas else None
+
+
+class _ConexionSerializada:
+    """Envoltorio de la conexion que serializa el acceso entre hilos.
+
+    Hace falta porque el servidor MCP local ejecuta cada tool en un hilo de trabajo del
+    SDK, mientras que una conexion de sqlite3 esta atada por defecto al hilo que la creo.
+    Las alternativas serian una conexion por hilo -que con una base ``:memory:`` daria una
+    base distinta a cada hilo- o abrir y cerrar en cada consulta, mas lento y sin ganar
+    nada: las consultas de este proyecto son cortas y un cerrojo reentrante basta.
+
+    El cerrojo es reentrante para que ``transaction()`` pueda retenerlo durante toda la
+    transaccion sin bloquearse a si mismo, que es lo que impide que otro hilo lea la base a
+    medio escribir.
+    """
+
+    def __init__(self, conn: sqlite3.Connection, lock: threading.RLock) -> None:
+        self._conn = conn
+        self._lock = lock
+
+    def execute(self, sql: str, parametros: Sequence[object] = ()) -> _Resultado:
+        with self._lock:
+            return _Resultado(self._conn.execute(sql, parametros))
+
+    def executemany(self, sql: str, secuencia) -> _Resultado:
+        with self._lock:
+            return _Resultado(self._conn.executemany(sql, secuencia))
+
+    def executescript(self, sql: str) -> _Resultado:
+        with self._lock:
+            return _Resultado(self._conn.executescript(sql))
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+
 class SqliteRepository:
-    """Acceso a la copia local. Se puede usar como gestor de contexto."""
+    """Acceso a la copia local. Se puede usar como gestor de contexto.
+
+    Es seguro de usar desde varios hilos: el acceso a SQLite se serializa internamente
+    (ver :class:`_ConexionSerializada`).
+    """
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = str(db_path)
-        self._conn: sqlite3.Connection | None = None
+        self._conn: _ConexionSerializada | None = None
+        self._lock = threading.RLock()
 
     # -----------------------------------------------------------------------------------
     # Ciclo de vida
     # -----------------------------------------------------------------------------------
 
-    def connect(self) -> sqlite3.Connection:
+    def connect(self) -> _ConexionSerializada:
         """Abre la conexion, crea el esquema si hace falta y fija los PRAGMA (RNF-012)."""
         if self._conn is not None:
             return self._conn
@@ -57,7 +124,9 @@ class SqliteRepository:
 
         # isolation_level=None desactiva el manejo implicito de transacciones de sqlite3:
         # las abrimos nosotros por pagina, que es lo que exige la sincronizacion (RNF-012).
-        conn = sqlite3.connect(self.db_path, isolation_level=None)
+        # check_same_thread=False permite usar la conexion desde los hilos de trabajo del
+        # servidor MCP; la exclusion mutua la pone _ConexionSerializada.
+        conn = sqlite3.connect(self.db_path, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         # WAL permite leer la copia local (por ejemplo desde el MCP) mientras una
@@ -66,11 +135,11 @@ class SqliteRepository:
             conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(_ESQUEMA.read_text(encoding="utf-8"))
-        self._conn = conn
-        return conn
+        self._conn = _ConexionSerializada(conn, self._lock)
+        return self._conn
 
     @property
-    def conn(self) -> sqlite3.Connection:
+    def conn(self) -> _ConexionSerializada:
         return self.connect()
 
     def close(self) -> None:
@@ -86,20 +155,24 @@ class SqliteRepository:
         self.close()
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self) -> Iterator[_ConexionSerializada]:
         """Agrupa escrituras en una transaccion.
 
         El sincronizador envuelve **cada pagina** en una de estas: si el recorrido se corta,
         las paginas ya confirmadas se conservan y la pagina a medias se deshace entera.
+
+        El cerrojo se retiene durante toda la transaccion: sin eso, otro hilo podria leer la
+        base a medio escribir o intercalar su propio BEGIN.
         """
         conn = self.conn
-        conn.execute("BEGIN")
-        try:
-            yield conn
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        conn.execute("COMMIT")
+        with self._lock:
+            conn.execute("BEGIN")
+            try:
+                yield conn
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            conn.execute("COMMIT")
 
     # -----------------------------------------------------------------------------------
     # Modulos
