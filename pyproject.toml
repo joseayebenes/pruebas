@@ -14,7 +14,9 @@ license = { text = "Proprietary" }
 # ni de DOORS: eso es lo que permite ejecutar toda la suite de tests en cualquier
 # plataforma (RNF-013).
 dependencies = [
-    "mcp[cli]>=1.2,<3",
+    # MCP 2.x: FastMCP paso a llamarse MCPServer y la API cambio, asi que el rango se
+    # acota a esa mayor en lugar de aceptar ambas.
+    "mcp[cli]>=2,<3",
 ]
 
 [project.optional-dependencies]
