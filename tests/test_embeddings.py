@@ -317,3 +317,19 @@ def test_un_fallo_a_mitad_no_deja_embeddings_sueltos(entorno):
         servicio.update_index(MODULO)
 
     assert repo.count_embeddings(MODULO, proveedor.model) == 0
+
+
+def test_un_atributo_del_perfil_que_no_esta_sincronizado_se_avisa(entorno, caplog):
+    """No es un error, pero tampoco puede pasar desapercibido.
+
+    El texto de embedding solo puede usar atributos que la sincronizacion haya traido a la
+    copia local. Pedir uno que no esta no falla: simplemente no aporta nada, y sin aviso
+    seria un ajuste que parece aplicado y no lo esta.
+    """
+    servicio, _, _, _ = entorno
+
+    with caplog.at_level("WARNING"):
+        servicio.update_index(MODULO, attributes=("Criticidad",))
+
+    assert "no estan en la copia local" in caplog.text
+    assert "Criticidad" in caplog.text

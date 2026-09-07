@@ -35,6 +35,8 @@ dev = [
 
 [project.scripts]
 doors-sync = "doors_kb.cli.sync_doors:main"
+doors-embed = "doors_kb.cli.embed:main"
+doors-search = "doors_kb.cli.search:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

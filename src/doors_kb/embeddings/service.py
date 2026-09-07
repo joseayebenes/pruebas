@@ -77,6 +77,8 @@ class EmbeddingService:
                     continue
                 pendientes.append((requisito, texto, hash_actual))
 
+            self._avisar_de_atributos_ausentes(atributos, candidatos)
+
             if pendientes:
                 self._generar(pendientes, modelo)
                 stats["generated"] = len(pendientes)
@@ -92,6 +94,32 @@ class EmbeddingService:
                 "Generacion de embeddings fallida en '%s': %s", module_path, stats["error"]
             )
             raise
+
+    @staticmethod
+    def _avisar_de_atributos_ausentes(
+        atributos: Sequence[str], candidatos: list[dict]
+    ) -> None:
+        """Avisa si un atributo del perfil no existe en la copia local.
+
+        El perfil de embeddings solo puede usar atributos que la sincronizacion haya traido:
+        pedir uno que no esta en DOORS_SYNC_ATTRIBUTES no da error, simplemente no aporta
+        nada al texto. Sin este aviso seria un ajuste que parece aplicado y no lo esta.
+        """
+        if not atributos or not candidatos:
+            return
+        presentes = set()
+        for requisito in candidatos:
+            valores = requisito.get("attributes")
+            if isinstance(valores, dict):
+                presentes.update(valores)
+        ausentes = [nombre for nombre in atributos if nombre not in presentes]
+        if ausentes:
+            logger.warning(
+                "Estos atributos del perfil de embeddings no estan en la copia local y no "
+                "aportan nada al texto: %s. Anadelos a DOORS_SYNC_ATTRIBUTES y vuelve a "
+                "sincronizar.",
+                ", ".join(ausentes),
+            )
 
     def _generar(self, pendientes: list[tuple[dict, str, str]], modelo: str) -> None:
         """Pide los vectores al proveedor y los guarda en una sola transaccion.
