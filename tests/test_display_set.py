@@ -57,13 +57,16 @@ def test_la_busqueda_tambien_respeta_la_vista_cuando_se_pide(fuente, atributos):
 
 def test_el_dxl_generado_filtra_por_visibilidad_solo_cuando_se_pide():
     """El predicado viaja dentro del script; su nombre exacto se valida con DOORS real."""
-    completo = dxl.script_fetch_page("/P/R", ["Object Text"])
-    visible = dxl.script_fetch_page("/P/R", ["Object Text"], respect_display_set=True)
+    completo = dxl.script_fetch_page("/P/R", ["Object Text"], "testigo01")
+    visible = dxl.script_fetch_page(
+        "/P/R", ["Object Text"], "testigo01", respect_display_set=True
+    )
 
     assert "isVisible(o)" not in completo
     assert "!isVisible(o)" in visible
-    assert "!isVisible(o)" in dxl.script_search("/P/R", "x", ["Object Text"],
-                                                respect_display_set=True)
+    busqueda = dxl.script_search("/P/R", "x", ["Object Text"], "testigo01",
+                                 respect_display_set=True)
+    assert "!isVisible(o)" in busqueda
 
 
 # ---------------------------------------------------------------------------------------

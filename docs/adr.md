@@ -233,3 +233,24 @@ del preambulo (RNF-008) y del doble escapado del JSON de error.
   script -una ruta de modulo, un termino de busqueda- tiene que seguir siendo un literal
   cerrado para que un agente no pueda inyectar codigo DXL (RF-041, ADR-003).
 * Hay un test que falla si alguien vuelve a introducir una barra invertida en el DXL generado.
+
+---
+
+## ADR-015 — Cada llamada a DOORS lleva su propio testigo
+
+**Decision.** Cada script incluye un identificador unico de la llamada y la respuesta tiene
+que devolverlo; si no coincide, se rechaza.
+
+**Motivacion.** Al ejecutar la lectura de atributos contra un DOORS real, Python recibio
+`ok`: el resultado de la sonda de sesion de la llamada **anterior**. Cuando un script DXL
+falla, `oleSetResult` no llega a ejecutarse y la propiedad `result` de DOORS conserva el
+valor previo. No hay nada en esa respuesta que indique que es vieja.
+
+Es un fallo especialmente peligroso porque no se manifiesta como un error: en una
+sincronizacion paginada, una pagina que falla devolveria los requisitos de la pagina
+anterior, el sincronizador los daria por visitados y marcaria como eliminados objetos que
+nunca llego a leer, que es justo lo que RF-061 existe para impedir.
+
+**Consecuencias.** Un script que falla produce ahora un error explicito que remite a la
+ventana *DXL output* de DOORS, donde esta el mensaje del interprete. El testigo se inserta
+sin escapar en el script, asi que se valida que sea alfanumerico antes de generarlo.

@@ -217,6 +217,25 @@ Es intencionado (RF-044). El campo `truncated` de la respuesta dice cuantos resu
 omitieron. Reduce `limit`, reduce `max_attribute_chars`, o continua el recorrido con el
 `next_cursor` que devuelve la propia respuesta.
 
+### "DOORS ha devuelto el resultado de una llamada anterior"
+
+El script DXL fallo a mitad y no llego a ejecutar `oleSetResult`, asi que la propiedad
+`result` de DOORS conservaba lo que devolvio la llamada anterior. El proyecto lo detecta
+porque cada llamada lleva un testigo propio, pero **el motivo del fallo no esta en ese
+mensaje**: esta en DOORS.
+
+En la ventana de DOORS, abre **Tools -> Edit DXL** (o la ventana *DXL output* si ya esta
+abierta): ahi aparece el error del interprete con su numero de linea. Ese texto es lo unico
+que explica el fallo; pasalo tal cual al arreglarlo.
+
+### "wrong attribute type '...' for Enumeration"
+
+Ocurrio en la primera lectura real de atributos: `at.size` solo existe en los tipos de
+enumeracion y consultarlo en un `Integer`, `String`, `Date` o `Text` aborta el script. Ya
+esta corregido con una guarda `at.type == attrEnumeration`. Si vuelve a aparecer con otra
+propiedad, el patron es el mismo: una propiedad de DXL que solo aplica a ciertos tipos y se
+esta leyendo sin comprobar el tipo antes.
+
 ### La busqueda semantica falla con "necesita numpy"
 
 La busqueda vectorial no viene en el nucleo. Instala el extra:

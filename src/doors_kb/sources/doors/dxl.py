@@ -109,7 +109,26 @@ string cut(string s, int maxChars) {
 """
 
 
-def _abrir_modulo(module_path: str) -> str:
+def _cabecera(buffer: str, token: str, tipo: str) -> str:
+    """Cabecera comun de toda respuesta: marca, testigo de la llamada y tipo.
+
+    El **testigo** es imprescindible, no decorativo. Cuando un script DXL falla,
+    ``oleSetResult`` no llega a ejecutarse y la propiedad ``result`` de DOORS conserva el
+    valor de la llamada anterior. Sin un testigo por llamada, Python leeria esa respuesta
+    vieja creyendola nueva: una pagina de requisitos podria repetirse y el sincronizador
+    daria por visitados objetos que nunca vio. Comprobar el testigo convierte ese riesgo
+    silencioso en un error explicito.
+    """
+    if not token.isalnum():
+        raise ValueError(f"El testigo de la llamada debe ser alfanumerico: {token!r}")
+    return (
+        f'{buffer} += ns("{PROTOCOLO}")\n'
+        f'{buffer} += ns("{token}")\n'
+        f'{buffer} += ns("{tipo}")\n'
+    )
+
+
+def _abrir_modulo(module_path: str, token: str) -> str:
     """Abre el modulo en lectura y aborta con un error explicito si no se puede (RF-004).
 
     Se abre siempre por ``fullName`` y de forma explicita: la sesion Automation que crea
@@ -121,9 +140,7 @@ def _abrir_modulo(module_path: str) -> str:
 Module m = read("{ruta}", false)
 if (null m) {{
     Buffer e = create
-    e += ns("{PROTOCOLO}")
-    e += ns("ERROR")
-    e += ns("NO_MODULE")
+{_cabecera("e", token, "ERROR")}    e += ns("NO_MODULE")
     oleSetResult(stringOf e)
     delete e
     halt
@@ -201,7 +218,7 @@ def _emitir_atributos(
 # ---------------------------------------------------------------------------------------
 
 
-def script_list_attributes(module_path: str, run_limit_cycles: int = 0) -> str:
+def script_list_attributes(module_path: str, token: str, run_limit_cycles: int = 0) -> str:
     """Lista los atributos de objeto del modulo con sus metadatos (RF-010, RF-011).
 
     Formato emitido: ``ATTRS``, numero de atributos y, por cada uno, nombre, tipo, si es de
@@ -210,12 +227,10 @@ def script_list_attributes(module_path: str, run_limit_cycles: int = 0) -> str:
     return (
         build_preamble(run_limit_cycles)
         + _HELPERS
-        + _abrir_modulo(module_path)
+        + _abrir_modulo(module_path, token)
         + f"""
 Buffer b = create
-b += ns("{PROTOCOLO}")
-b += ns("ATTRS")
-
+{_cabecera("b", token, "ATTRS")}
 int total = 0
 AttrDef adc
 for adc in m do {{
@@ -231,7 +246,11 @@ for ad in m do {{
     b += ns(at.name "")
     b += nsBool(ad.system)
     b += nsBool(ad.multi)
-    int n = at.size
+    // at.size solo existe en los tipos de enumeracion. Consultarlo en un Integer, un
+    // String, un Date o un Text aborta el script con "wrong attribute type for
+    // Enumeration", que es como fallo la primera lectura de atributos contra DOORS real.
+    int n = 0
+    if (at.type == attrEnumeration) {{ n = at.size }}
     b += nsInt(n)
     int i
     for (i = 0; i < n; i++) {{
@@ -247,6 +266,7 @@ delete b
 def script_fetch_page(
     module_path: str,
     attributes: Sequence[str],
+    token: str,
     *,
     cursor: int | None = None,
     page_size: int = 25,
@@ -270,7 +290,7 @@ def script_fetch_page(
     return (
         build_preamble(run_limit_cycles)
         + _HELPERS
-        + _abrir_modulo(module_path)
+        + _abrir_modulo(module_path, token)
         + _posicionar_cursor(cursor)
         + f"""
 Buffer b = create
@@ -287,9 +307,7 @@ while (!null o) {{
 {_emitir_atributos(attributes, max_attribute_chars, "datos")}    emitidos++
     o = next(o)
 }}
-b += ns("{PROTOCOLO}")
-b += ns("PAGE")
-if (agotado) {{ b += ns("") }} else {{ b += nsInt(ultimo) }}
+{_cabecera("b", token, "PAGE")}if (agotado) {{ b += ns("") }} else {{ b += nsInt(ultimo) }}
 b += nsInt(emitidos)
 b += stringOf datos
 oleSetResult(stringOf b)
@@ -303,6 +321,7 @@ def script_get_requirement(
     module_path: str,
     absolute_number: int,
     attributes: Sequence[str],
+    token: str,
     *,
     max_attribute_chars: int = 20_000,
     run_limit_cycles: int = 0,
@@ -314,12 +333,10 @@ def script_get_requirement(
     return (
         build_preamble(run_limit_cycles)
         + _HELPERS
-        + _abrir_modulo(module_path)
+        + _abrir_modulo(module_path, token)
         + f"""
 Buffer b = create
-b += ns("{PROTOCOLO}")
-b += ns("REQ")
-Object o = object({int(absolute_number)}, m)
+{_cabecera("b", token, "REQ")}Object o = object({int(absolute_number)}, m)
 if (null o) {{
     b += nsBool(false)
     oleSetResult(stringOf b)
@@ -341,6 +358,7 @@ def script_search(
     module_path: str,
     query: str,
     attributes: Sequence[str],
+    token: str,
     *,
     regex: bool = False,
     case_sensitive: bool = False,
@@ -378,7 +396,7 @@ def script_search(
     return (
         build_preamble(run_limit_cycles)
         + _HELPERS
-        + _abrir_modulo(module_path)
+        + _abrir_modulo(module_path, token)
         + _posicionar_cursor(cursor)
         + f"""
 {comparacion}
@@ -410,9 +428,7 @@ while (!null o) {{
     }}
     o = next(o)
 }}
-b += ns("{PROTOCOLO}")
-b += ns("SEARCH")
-if (agotado) {{ b += ns("") }} else {{ b += nsInt(ultimo) }}
+{_cabecera("b", token, "SEARCH")}if (agotado) {{ b += ns("") }} else {{ b += nsInt(ultimo) }}
 b += nsInt(emitidos)
 b += stringOf datos
 oleSetResult(stringOf b)
@@ -423,7 +439,12 @@ delete b
 
 
 def script_get_links(
-    module_path: str, absolute_number: int, *, direction: str = "both", run_limit_cycles: int = 0
+    module_path: str,
+    absolute_number: int,
+    token: str,
+    *,
+    direction: str = "both",
+    run_limit_cycles: int = 0,
 ) -> str:
     """Obtiene la trazabilidad estandar de un objeto (RF-035, RF-036).
 
@@ -477,12 +498,10 @@ for li in o <- "*" do {
     return (
         build_preamble(run_limit_cycles)
         + _HELPERS
-        + _abrir_modulo(module_path)
+        + _abrir_modulo(module_path, token)
         + f"""
 Buffer b = create
-b += ns("{PROTOCOLO}")
-b += ns("LINKS")
-Object o = object({int(absolute_number)}, m)
+{_cabecera("b", token, "LINKS")}Object o = object({int(absolute_number)}, m)
 if (null o) {{
     b += nsBool(false)
     oleSetResult(stringOf b)

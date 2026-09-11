@@ -8,6 +8,11 @@ El otro motivo para este formato es el diagnostico. La respuesta de DOORS puede 
 cortada, y con JSON eso se manifestaba como un error de sintaxis que no distinguia una
 respuesta truncada de una mal construida. Aqui la longitud declarada no cuadra con lo que
 hay, y el error puede decir exactamente que paso.
+
+Cada respuesta lleva ademas un **testigo** propio de la llamada. Cuando un script DXL falla,
+``oleSetResult`` no llega a ejecutarse y la propiedad ``result`` de DOORS conserva lo que
+devolvio la llamada anterior: sin testigo, Python leeria esa respuesta vieja creyendola
+nueva.
 """
 
 from __future__ import annotations
@@ -59,11 +64,15 @@ class LectorCampos:
         return int(crudo) if crudo else None
 
 
-def parsear(crudo: str, *, script: str | None = None) -> tuple[str, LectorCampos]:
+def parsear(
+    crudo: str, token: str, *, script: str | None = None
+) -> tuple[str, LectorCampos]:
     """Convierte la respuesta de DOORS en (tipo, lector de campos).
 
     El tipo dice que script la produjo (``ATTRS``, ``PAGE``, ``REQ``, ``SEARCH``, ``LINKS``)
     o si es un error declarado por el propio script (``ERROR``).
+
+    Comprueba que la respuesta corresponde **a esta llamada** y no a la anterior.
     """
     campos = _leer_campos(crudo)
     lector = LectorCampos(campos)
@@ -72,7 +81,17 @@ def parsear(crudo: str, *, script: str | None = None) -> tuple[str, LectorCampos
     if marca != PROTOCOLO:
         raise DxlExecutionError(
             f"La respuesta de DOORS no empieza por la marca del protocolo ({PROTOCOLO}). "
-            f"Suele ser un mensaje del interprete DXL: {crudo[:300]!r}",
+            f"Suele ser un mensaje del interprete DXL: {crudo[:2000]!r}",
+            script=script,
+        )
+
+    recibido = lector.texto()
+    if recibido != token:
+        raise DxlExecutionError(
+            "DOORS ha devuelto el resultado de una llamada anterior, no el de esta "
+            f"(testigo esperado {token!r}, recibido {recibido!r}). Significa que el script "
+            "DXL no llego a terminar: abre la ventana 'DXL output' en DOORS para ver el "
+            "error del interprete.",
             script=script,
         )
     return lector.texto(), lector

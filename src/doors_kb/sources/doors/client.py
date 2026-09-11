@@ -22,6 +22,7 @@ Las respuestas no llegan en JSON sino en el formato de campos con longitud de
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -121,10 +122,15 @@ class DoorsComClient:
             ) from exc
 
     def _sesion_lista(self, timeout: float) -> bool:
-        """Comprueba si la sesion ya responde a DXL (el usuario ya se autentico)."""
+        """Comprueba si la sesion ya responde a DXL (el usuario ya se autentico).
+
+        La sonda devuelve un testigo unico y se comprueba que sea ese. Con una respuesta
+        fija daria por buena la sesion al leer el resultado de una llamada anterior, que es
+        exactamente lo que ocurre cuando un script falla y ``result`` se queda rancio.
+        """
+        testigo = self.nuevo_testigo()
         try:
-            self._ejecutar_dxl('oleSetResult("ok")', timeout=timeout)
-            return True
+            return self._ejecutar_dxl(f'oleSetResult("{testigo}")', timeout=timeout) == testigo
         except Exception:
             return False
 
@@ -164,7 +170,18 @@ class DoorsComClient:
 
         return self.worker.call(ejecutar, timeout=espera)
 
-    def _ejecutar(self, script: str, module_path: str) -> tuple[str, protocolo.LectorCampos]:
+    @staticmethod
+    def nuevo_testigo() -> str:
+        """Identificador unico de una llamada, que la respuesta debe devolver.
+
+        Sin el no hay forma de distinguir una respuesta nueva de la que quedo en
+        ``doors.result`` cuando el script anterior fallo (ver ``protocolo``).
+        """
+        return secrets.token_hex(8)
+
+    def _ejecutar(
+        self, script: str, module_path: str, token: str
+    ) -> tuple[str, protocolo.LectorCampos]:
         """Ejecuta un script y lee su respuesta.
 
         Un ``ERROR`` declarado por el propio script se traduce al error de Python que le
@@ -172,7 +189,7 @@ class DoorsComClient:
         interprete DXL, y se propaga con su texto, que es lo que permite diagnosticarlo.
         """
         crudo = self._ejecutar_dxl(script)
-        tipo, lector = protocolo.parsear(crudo, script=script)
+        tipo, lector = protocolo.parsear(crudo, token, script=script)
         if tipo == "ERROR":
             codigo = lector.texto()
             if codigo == "NO_MODULE":
@@ -189,9 +206,13 @@ class DoorsComClient:
         if module_path in self._esquema:
             return self._esquema[module_path]
 
+        testigo = self.nuevo_testigo()
         _, lector = self._ejecutar(
-            dxl.script_list_attributes(module_path, self.settings.dxl_run_limit_cycles),
+            dxl.script_list_attributes(
+                module_path, testigo, self.settings.dxl_run_limit_cycles
+            ),
             module_path,
+            testigo,
         )
         definiciones = []
         for _ in range(lector.entero()):
@@ -231,10 +252,12 @@ class DoorsComClient:
     ) -> RequirementPage:
         """Lee una pagina de requisitos a partir del cursor (RF-020, RF-057, RF-058)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
+        testigo = self.nuevo_testigo()
         _, lector = self._ejecutar(
             dxl.script_fetch_page(
                 module_path,
                 attributes,
+                testigo,
                 cursor=cursor,
                 page_size=page_size,
                 max_attribute_chars=max_attribute_chars,
@@ -244,6 +267,7 @@ class DoorsComClient:
                 run_limit_cycles=self.settings.dxl_run_limit_cycles,
             ),
             module_path,
+            testigo,
         )
         siguiente = lector.opcional_entero()
         registros = tuple(
@@ -261,15 +285,18 @@ class DoorsComClient:
     ) -> RequirementRecord | None:
         """Obtiene un objeto por su Absolute Number (RF-021)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
+        testigo = self.nuevo_testigo()
         _, lector = self._ejecutar(
             dxl.script_get_requirement(
                 module_path,
                 absolute_number,
                 attributes,
+                testigo,
                 max_attribute_chars=max_attribute_chars,
                 run_limit_cycles=self.settings.dxl_run_limit_cycles,
             ),
             module_path,
+            testigo,
         )
         if not lector.booleano():
             return None
@@ -295,11 +322,13 @@ class DoorsComClient:
     ) -> SearchPage:
         """Busca dentro de DOORS y devuelve solo las coincidencias (RF-030..RF-034)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
+        testigo = self.nuevo_testigo()
         _, lector = self._ejecutar(
             dxl.script_search(
                 module_path,
                 query,
                 attributes,
+                testigo,
                 regex=regex,
                 case_sensitive=case_sensitive,
                 cursor=cursor,
@@ -309,6 +338,7 @@ class DoorsComClient:
                 run_limit_cycles=self.settings.dxl_run_limit_cycles,
             ),
             module_path,
+            testigo,
         )
         siguiente = lector.opcional_entero()
         hits = []
@@ -336,14 +366,17 @@ class DoorsComClient:
         No incluye enlaces externos OSLC; el servidor MCP lo declara en su respuesta
         (RF-037).
         """
+        testigo = self.nuevo_testigo()
         _, lector = self._ejecutar(
             dxl.script_get_links(
                 module_path,
                 absolute_number,
+                testigo,
                 direction=direction,
                 run_limit_cycles=self.settings.dxl_run_limit_cycles,
             ),
             module_path,
+            testigo,
         )
         if not lector.booleano():
             return []

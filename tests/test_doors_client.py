@@ -6,6 +6,8 @@ errores ve el usuario. El worker COM se usa de verdad, con la inicializacion de 
 sustituida.
 """
 
+import re
+
 import pytest
 
 from doors_kb.config import Settings
@@ -21,8 +23,13 @@ def ns(valor: object) -> str:
     return f"{len(texto)}:{texto}"
 
 
+# El testigo real lo genera el cliente en cada llamada, asi que las respuestas preparadas
+# llevan un hueco que DoorsFalso rellena con el que venga en el script.
+TESTIGO = "{TESTIGO}"
+
+
 def respuesta(tipo: str, *campos: object) -> str:
-    return ns(PROTOCOLO) + ns(tipo) + "".join(ns(c) for c in campos)
+    return ns(PROTOCOLO) + TESTIGO + ns(tipo) + "".join(ns(c) for c in campos)
 
 
 # Tres atributos: nombre, tipo, es_sistema, multivaluado, n_enumerados, [enumerados...]
@@ -45,9 +52,12 @@ class DoorsFalso:
 
     def runStr(self, script: str) -> None:  # noqa: N802 (nombre impuesto por la API de DOORS)
         self.scripts.append(script)
+        testigo = re.search(r'ns\("([0-9a-f]{16})"\)', script)
         for marca, salida in self.respuestas.items():
             if marca in script:
-                self.result = salida
+                self.result = salida.replace(
+                    TESTIGO, ns(testigo.group(1)) if testigo else ""
+                )
                 return
         self.result = ""
 
@@ -307,5 +317,49 @@ def test_sin_pywin32_el_error_explica_que_falta():
     try:
         with pytest.raises(DoorsSessionError, match="pywin32"):
             cliente.start_session(timeout=1)
+    finally:
+        cliente.close()
+
+
+def test_una_respuesta_de_la_llamada_anterior_se_rechaza():
+    """El segundo fallo que destapo la primera lectura real de atributos.
+
+    Cuando un script DXL falla, oleSetResult no llega a ejecutarse y la propiedad result de
+    DOORS conserva lo que devolvio la llamada anterior. Sin testigo, Python leeria esa
+    respuesta vieja creyendola nueva: una pagina de requisitos podria repetirse y el
+    sincronizador daria por visitados objetos que nunca vio.
+    """
+    # Respuesta bien formada pero con el testigo de otra llamada.
+    vieja = ns(PROTOCOLO) + ns("0123456789abcdef") + ns("ATTRS") + ns(0)
+    cliente, _ = _cliente({ES_ATRIBUTOS: vieja})
+    try:
+        with pytest.raises(DxlExecutionError, match="llamada anterior"):
+            cliente.list_object_attributes("/P/Reqs")
+    finally:
+        cliente.close()
+
+
+def test_el_error_de_testigo_apunta_a_la_ventana_de_dxl():
+    """Es donde esta el mensaje del interprete, que es lo unico que explica el fallo."""
+    vieja = ns(PROTOCOLO) + ns("0123456789abcdef") + ns("ATTRS") + ns(0)
+    cliente, _ = _cliente({ES_ATRIBUTOS: vieja})
+    try:
+        with pytest.raises(DxlExecutionError, match="DXL output"):
+            cliente.list_object_attributes("/P/Reqs")
+    finally:
+        cliente.close()
+
+
+def test_cada_llamada_usa_un_testigo_distinto():
+    """Un testigo fijo no distinguiria la respuesta de esta llamada de la de la anterior."""
+    cliente, falso = _cliente({ES_ATRIBUTOS: ATRIBUTOS})
+    try:
+        cliente.list_object_attributes("/P/Reqs")
+        cliente._esquema.clear()  # fuerza una segunda consulta real
+        cliente.list_object_attributes("/P/Reqs")
+
+        testigos = [re.search(r'ns\("([0-9a-f]{16})"\)', s).group(1) for s in falso.scripts]
+        assert len(testigos) == 2
+        assert testigos[0] != testigos[1]
     finally:
         cliente.close()
