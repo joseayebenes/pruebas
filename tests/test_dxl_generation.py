@@ -1,10 +1,11 @@
 """Generacion de DXL: regresiones conocidas y escapado (RNF-008, RF-041, RF-040).
 
-Estas pruebas no necesitan DOORS: comprueban el texto que se le enviaria. Dos de ellas
-existen porque el fallo correspondiente ya ocurrio una vez en este proyecto (seccion 10).
+Estas pruebas no necesitan DOORS: comprueban el texto que se le enviaria. Varias existen
+porque el fallo correspondiente ya ocurrio de verdad en este proyecto (seccion 10 y
+ADR-014), y la mas importante es la que fija que **el DXL generado no contiene ni una sola
+secuencia de escape**.
 """
 
-import json
 
 import pytest
 
@@ -80,34 +81,43 @@ def test_una_ruta_de_modulo_con_comillas_no_puede_cerrar_el_literal():
     assert '/Proyecto/";' not in script
 
 
-def test_el_json_de_error_escapa_los_dos_niveles():
-    """Una ruta con comillas debe producir JSON valido, no JSON roto dentro de DXL.
+def test_el_dxl_generado_no_contiene_ninguna_secuencia_de_escape():
+    """El invariante que sostiene ADR-014 y que evita el fallo que tumbo la primera prueba real.
 
-    Hay dos escapados encadenados: el de JSON y el de DXL. Construir el payload con
-    json.dumps y escapar el resultado entero es lo que mantiene ambos correctos.
+    Al construir JSON dentro de DXL habia tres lenguajes de escapado encadenados y bastaba
+    equivocarse en uno para corromper la respuesta. Con el formato de campos con longitud no
+    hace falta escapar nada en la salida, asi que un backslash en el script generado es
+    senal de que alguien ha vuelto a introducir escapado.
     """
-    literal = dxl.literal_json({"error": "NO_MODULE", "module_path": '/P/"raro"'})
+    scripts = [
+        dxl.script_list_attributes("/Proyecto/Reqs"),
+        dxl.script_fetch_page("/Proyecto/Reqs", ["Object Heading", "Object Text"]),
+        dxl.script_get_requirement("/Proyecto/Reqs", 7, ["Object Text"]),
+        dxl.script_search("/Proyecto/Reqs", "timeout", ["Object Text"]),
+        dxl.script_get_links("/Proyecto/Reqs", 7),
+    ]
 
-    # Al deshacer el escapado de DXL debe quedar un JSON que se puede parsear.
-    interior = literal[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    assert json.loads(interior)["module_path"] == '/P/"raro"' 
-
-
-def test_un_termino_de_busqueda_con_comillas_queda_escapado():
-    script = dxl.script_search("/Proyecto/Reqs", 'dice "hola"', ["Object Text"])
-
-    assert '\\"hola\\"' in script
-
-
-def test_un_nombre_de_atributo_con_comillas_queda_escapado():
-    script = dxl.script_fetch_page("/Proyecto/Reqs", ['Estado " raro'])
-
-    assert 'Estado \\" raro' in script
+    for script in scripts:
+        assert "\\" not in script
 
 
-# ---------------------------------------------------------------------------------------
-# Estructura de los scripts
-# ---------------------------------------------------------------------------------------
+def test_los_valores_viajan_con_su_longitud_delante():
+    """Es lo que permite que un requisito con comillas o saltos de linea no necesite escapes."""
+    script = dxl.script_list_attributes("/Proyecto/Reqs")
+
+    assert "string ns(string s)" in script
+    assert 'return n ":" s' in script
+    assert "b += ns(ad.name)" in script
+
+
+def test_cada_respuesta_declara_la_marca_del_protocolo():
+    """Distingue una respuesta valida de un mensaje suelto del interprete DXL."""
+    for script in (
+        dxl.script_list_attributes("/P/R"),
+        dxl.script_fetch_page("/P/R", ["Object Text"]),
+        dxl.script_search("/P/R", "x", ["Object Text"]),
+    ):
+        assert f'ns("{dxl.PROTOCOLO}")' in script
 
 
 def test_los_modulos_se_abren_siempre_en_lectura():
@@ -126,7 +136,8 @@ def test_un_modulo_que_no_abre_produce_un_error_explicito():
     """Seccion 10: NO_MODULE es un error, no una lista vacia de requisitos."""
     script = dxl.script_fetch_page("/Proyecto/Reqs", ["Object Text"])
 
-    assert "NO_MODULE" in script
+    assert 'ns("ERROR")' in script
+    assert 'ns("NO_MODULE")' in script
     assert "halt" in script
 
 
@@ -156,7 +167,7 @@ def test_el_truncado_por_atributo_viaja_dentro_del_script():
     """RNF-011: se recorta en DOORS, no despues, para no traer texto que se va a tirar."""
     script = dxl.script_fetch_page("/Proyecto/Reqs", ["Object Text"], max_attribute_chars=500)
 
-    assert "cut(jsonEscape(o.\"Object Text\" \"\"), 500)" in script
+    assert 'ns(cut(o."Object Text" "", 500))' in script
 
 
 def test_la_busqueda_distingue_mayusculas_solo_cuando_se_pide():
@@ -175,18 +186,23 @@ def test_la_busqueda_por_expresion_regular_usa_el_motor_de_dxl():
     assert "regexp2(" in script
 
 
-def test_la_trazabilidad_declara_que_no_cubre_oslc():
-    """RF-037: el agente debe saber que la respuesta no incluye enlaces externos."""
+def test_la_trazabilidad_emite_el_sentido_de_cada_enlace():
+    """RF-035: el cliente necesita saber si el enlace entra o sale para orientarlo bien.
+
+    Que la respuesta no cubra enlaces OSLC (RF-037) lo declara el servidor MCP, no el DXL.
+    """
     script = dxl.script_get_links("/Proyecto/Reqs", 7)
 
-    assert "oslc_links_included" in script
+    assert 'ns("outgoing")' in script
+    assert 'ns("incoming")' in script
 
 
 def test_la_trazabilidad_entrante_reporta_los_modulos_que_no_pudo_cargar():
     """RF-036: un modulo origen sin permisos no puede pasar por 'sin enlaces'."""
     script = dxl.script_get_links("/Proyecto/Reqs", 7, direction="incoming")
 
-    assert "load_failures" in script
+    assert "fallos += ns(fullName(otro))" in script
+    assert "nFallos" in script
 
 
 def test_la_direccion_de_la_trazabilidad_filtra_los_bloques_generados():
@@ -198,13 +214,13 @@ def test_la_direccion_de_la_trazabilidad_filtra_los_bloques_generados():
     assert 'o <- "*"' in entrantes and 'o -> "*"' not in entrantes
 
 
-def test_los_atributos_se_separan_con_comas_validas():
-    """El JSON emitido debe ser parseable: separadores entre atributos, no antes del primero."""
+def test_los_atributos_se_emiten_en_el_orden_pedido():
+    """Los nombres no viajan en la respuesta: el orden es el contrato con el cliente."""
     script = dxl.script_fetch_page("/Proyecto/Reqs", ["Object Heading", "Object Text"])
 
-    assert 'b += "\\"Object Heading\\": \\""' in script
-    assert 'b += "," "\\"Object Text\\": \\""' in script
-    assert "b += , " not in script  # separador mal colocado: DXL no compilaria
+    posicion_titulo = script.index('o."Object Heading"')
+    posicion_texto = script.index('o."Object Text"')
+    assert posicion_titulo < posicion_texto
 
 
 def test_el_recorte_reserva_sitio_para_su_propio_marcador():

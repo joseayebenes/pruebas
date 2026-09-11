@@ -197,3 +197,39 @@ embeddings.
 proveedor de pago tiene coste: conviene fijar el perfil antes de indexar un repositorio
 grande. La clave primaria incluye ademas el modelo, de modo que dos modelos pueden convivir y
 se puede migrar de proveedor sin quedarse sin busqueda semantica mientras se reindexa (R-006).
+
+---
+
+## ADR-014 — Los scripts DXL no construyen JSON
+
+**Decision.** Los scripts DXL emiten cada valor precedido de su longitud
+(`15:Absolute Number`) y es Python quien monta el JSON. En el DXL generado no queda **ni una
+sola secuencia de escape**.
+
+**Motivacion.** La primera ejecucion contra un DOORS real fallo con
+`DxlExecutionError: DOORS devolvio una respuesta que no es JSON`. La causa: el script cerraba
+cada valor con el literal DXL `"\""`, que no producia una comilla sino una barra invertida
+seguida de comilla, de modo que la cadena JSON nunca cerraba.
+
+El backslash concreto era lo de menos. El problema de fondo era que habia **tres lenguajes
+de escapado encadenados** -Python escapa para generar el DXL, DXL escapa para construir la
+cadena, y esa cadena tiene que ser JSON valido- y bastaba equivocarse en cualquiera de los
+tres para corromper la respuesta. Parchear ese cierre habria dejado el mismo fallo latente en
+`jsonEscape`, que usa las mismas secuencias para escapar comillas **dentro** de los valores:
+habria vuelto a romperse en cuanto un requisito contuviera una comilla, que es lo normal.
+
+Es la tercera vez que este proyecto tropieza con escapado anidado, despues del `\n` literal
+del preambulo (RNF-008) y del doble escapado del JSON de error.
+
+**Consecuencias.**
+
+* Un valor puede contener comillas, barras invertidas, saltos de linea o tabuladores sin
+  ningun tratamiento especial: el lector no busca delimitadores, cuenta caracteres.
+* Una respuesta cortada se detecta con precision -la longitud declarada no cuadra- en lugar
+  de manifestarse como un error de sintaxis indistinguible de una respuesta mal construida.
+* El orden de los campos pasa a ser el contrato entre `dxl.py` y `client.py`: los nombres no
+  viajan. A cambio la respuesta ocupa menos y no hay nada que escapar.
+* Sigue existiendo escapado de **entrada** (`escape_dxl_string`): lo que Python inserta en un
+  script -una ruta de modulo, un termino de busqueda- tiene que seguir siendo un literal
+  cerrado para que un agente no pueda inyectar codigo DXL (RF-041, ADR-003).
+* Hay un test que falla si alguien vuelve a introducir una barra invertida en el DXL generado.

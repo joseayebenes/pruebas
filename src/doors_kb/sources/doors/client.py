@@ -14,11 +14,13 @@ Las tres decisiones que gobiernan este archivo, todas nacidas de fallos reales
 * **Validacion contra el esquema.** Los atributos se comprueban contra las ``AttrDef`` del
   modulo antes de leer nada, porque ``objectAttributeText`` con ``noError`` devuelve cadena
   vacia tanto si el atributo no existe como si esta vacio.
+
+Las respuestas no llegan en JSON sino en el formato de campos con longitud de
+``protocolo.py``; el motivo esta en ADR-014.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections.abc import Sequence
@@ -28,7 +30,6 @@ from ...config import Settings
 from ...errors import (
     DoorsModuleError,
     DoorsSessionError,
-    DxlExecutionError,
 )
 from ...models import (
     AttributeDefinition,
@@ -40,7 +41,7 @@ from ...models import (
     SearchPage,
 )
 from ..base import validar_nombres
-from . import dxl
+from . import dxl, protocolo
 from .com_worker import ComWorker
 
 logger = logging.getLogger(__name__)
@@ -163,23 +164,21 @@ class DoorsComClient:
 
         return self.worker.call(ejecutar, timeout=espera)
 
-    def _ejecutar_json(self, script: str, module_path: str) -> dict[str, Any]:
-        """Ejecuta un script y parsea su respuesta JSON.
+    def _ejecutar(self, script: str, module_path: str) -> tuple[str, protocolo.LectorCampos]:
+        """Ejecuta un script y lee su respuesta.
 
-        Un resultado que no es JSON casi siempre significa que el interprete DXL devolvio un
-        mensaje de error; se propaga con el texto original, que es lo que permite
-        diagnosticarlo.
+        Un ``ERROR`` declarado por el propio script se traduce al error de Python que le
+        corresponde; una respuesta que no sigue el protocolo casi siempre es un mensaje del
+        interprete DXL, y se propaga con su texto, que es lo que permite diagnosticarlo.
         """
         crudo = self._ejecutar_dxl(script)
-        try:
-            datos = json.loads(crudo) if crudo else {}
-        except json.JSONDecodeError as exc:
-            raise DxlExecutionError(
-                f"DOORS devolvio una respuesta que no es JSON: {crudo[:500]!r}", script=script
-            ) from exc
-        if isinstance(datos, dict) and datos.get("error") == "NO_MODULE":
-            raise DoorsModuleError(module_path, "read(...) devolvio null")
-        return datos
+        tipo, lector = protocolo.parsear(crudo, script=script)
+        if tipo == "ERROR":
+            codigo = lector.texto()
+            if codigo == "NO_MODULE":
+                raise DoorsModuleError(module_path, "read(...) devolvio null")
+            raise DoorsModuleError(module_path, f"el script DXL reporto '{codigo}'")
+        return tipo, lector
 
     # -----------------------------------------------------------------------------------
     # Protocolo RequirementsSource
@@ -190,21 +189,27 @@ class DoorsComClient:
         if module_path in self._esquema:
             return self._esquema[module_path]
 
-        datos = self._ejecutar_json(
+        _, lector = self._ejecutar(
             dxl.script_list_attributes(module_path, self.settings.dxl_run_limit_cycles),
             module_path,
         )
-        definiciones = [
-            AttributeDefinition(
-                name=a["name"],
-                type_name=a.get("type", ""),
-                is_object=True,
-                is_system=bool(a.get("is_system", False)),
-                multi_valued=bool(a.get("multi_valued", False)),
-                enum_values=tuple(a.get("enum_values", ())),
+        definiciones = []
+        for _ in range(lector.entero()):
+            nombre = lector.texto()
+            tipo = lector.texto()
+            es_sistema = lector.booleano()
+            multivaluado = lector.booleano()
+            enumerados = tuple(lector.texto() for _ in range(lector.entero()))
+            definiciones.append(
+                AttributeDefinition(
+                    name=nombre,
+                    type_name=tipo,
+                    is_object=True,
+                    is_system=es_sistema,
+                    multi_valued=multivaluado,
+                    enum_values=enumerados,
+                )
             )
-            for a in datos.get("attributes", [])
-        ]
         self._esquema[module_path] = definiciones
         return definiciones
 
@@ -226,7 +231,7 @@ class DoorsComClient:
     ) -> RequirementPage:
         """Lee una pagina de requisitos a partir del cursor (RF-020, RF-057, RF-058)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
-        datos = self._ejecutar_json(
+        _, lector = self._ejecutar(
             dxl.script_fetch_page(
                 module_path,
                 attributes,
@@ -240,10 +245,11 @@ class DoorsComClient:
             ),
             module_path,
         )
+        siguiente = lector.opcional_entero()
         registros = tuple(
-            self._a_registro(module_path, bruto) for bruto in datos.get("records", [])
+            self._leer_registro(module_path, attributes, lector) for _ in range(lector.entero())
         )
-        return RequirementPage(records=registros, next_cursor=datos.get("next_cursor"))
+        return RequirementPage(records=registros, next_cursor=siguiente)
 
     def get_requirement(
         self,
@@ -255,7 +261,7 @@ class DoorsComClient:
     ) -> RequirementRecord | None:
         """Obtiene un objeto por su Absolute Number (RF-021)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
-        datos = self._ejecutar_json(
+        _, lector = self._ejecutar(
             dxl.script_get_requirement(
                 module_path,
                 absolute_number,
@@ -265,10 +271,14 @@ class DoorsComClient:
             ),
             module_path,
         )
-        bruto = datos.get("record")
-        if not bruto or bruto.get("is_deleted"):
+        if not lector.booleano():
             return None
-        return self._a_registro(module_path, bruto)
+        numero = lector.entero()
+        identificador = lector.texto()
+        outline = lector.texto()
+        if lector.booleano():  # borrado en DOORS
+            return None
+        return self._componer(module_path, numero, identificador, outline, attributes, lector)
 
     def search(
         self,
@@ -285,7 +295,7 @@ class DoorsComClient:
     ) -> SearchPage:
         """Busca dentro de DOORS y devuelve solo las coincidencias (RF-030..RF-034)."""
         self.validate_attributes(module_path, attributes).raise_if_invalid()
-        datos = self._ejecutar_json(
+        _, lector = self._ejecutar(
             dxl.script_search(
                 module_path,
                 query,
@@ -300,21 +310,23 @@ class DoorsComClient:
             ),
             module_path,
         )
-        hits = tuple(
-            SearchHit(
-                record=RequirementRecord(
-                    module_path=module_path,
-                    absolute_number=int(h["absolute_number"]),
-                    identifier=h.get("identifier", ""),
-                    outline_number=h.get("outline_number", ""),
-                ),
-                matched_attribute=h.get("matched_attribute", ""),
-                match_start=int(h.get("match_start", -1)),
-                match_text=h.get("value", ""),
+        siguiente = lector.opcional_entero()
+        hits = []
+        for _ in range(lector.entero()):
+            hits.append(
+                SearchHit(
+                    record=RequirementRecord(
+                        module_path=module_path,
+                        absolute_number=lector.entero(),
+                        identifier=lector.texto(),
+                        outline_number=lector.texto(),
+                    ),
+                    matched_attribute=lector.texto(),
+                    match_start=lector.entero(),
+                    match_text=lector.texto(),
+                )
             )
-            for h in datos.get("hits", [])
-        )
-        return SearchPage(hits=hits, next_cursor=datos.get("next_cursor"))
+        return SearchPage(hits=tuple(hits), next_cursor=siguiente)
 
     def get_links(
         self, module_path: str, absolute_number: int, *, direction: str = "both"
@@ -324,7 +336,7 @@ class DoorsComClient:
         No incluye enlaces externos OSLC; el servidor MCP lo declara en su respuesta
         (RF-037).
         """
-        datos = self._ejecutar_json(
+        _, lector = self._ejecutar(
             dxl.script_get_links(
                 module_path,
                 absolute_number,
@@ -333,48 +345,81 @@ class DoorsComClient:
             ),
             module_path,
         )
-        fallos = datos.get("load_failures", [])
+        if not lector.booleano():
+            return []
+
+        fallos = [lector.texto() for _ in range(lector.entero())]
         if fallos:
             logger.warning(
                 "No se pudieron cargar %d modulo(s) origen al leer enlaces entrantes: %s",
                 len(fallos),
                 ", ".join(fallos),
             )
+
         enlaces = []
-        for bruto in datos.get("links", []):
-            sentido = bruto.get("direction", "outgoing")
-            enlaces.append(
-                LinkRecord(
-                    source_module=bruto.get("source_module", module_path),
-                    source_absolute_number=int(
-                        bruto.get("source_absolute_number", absolute_number)
-                    ),
-                    target_module=bruto.get("target_module", ""),
-                    target_absolute_number=int(bruto.get("target_absolute_number", 0)),
-                    link_module=bruto.get("link_module", ""),
-                    direction=sentido,
+        for _ in range(lector.entero()):
+            sentido = lector.texto()
+            otro_modulo = lector.texto()
+            otro_numero = lector.entero()
+            modulo_enlace = lector.texto()
+            if sentido == "outgoing":
+                enlaces.append(
+                    LinkRecord(
+                        source_module=module_path,
+                        source_absolute_number=absolute_number,
+                        target_module=otro_modulo,
+                        target_absolute_number=otro_numero,
+                        link_module=modulo_enlace,
+                        direction=sentido,
+                    )
                 )
-            )
+            else:
+                enlaces.append(
+                    LinkRecord(
+                        source_module=otro_modulo,
+                        source_absolute_number=otro_numero,
+                        target_module=module_path,
+                        target_absolute_number=absolute_number,
+                        link_module=modulo_enlace,
+                        direction=sentido,
+                    )
+                )
         return enlaces
 
     # -----------------------------------------------------------------------------------
 
+    def _leer_registro(
+        self, module_path: str, attributes: Sequence[str], lector: protocolo.LectorCampos
+    ) -> RequirementRecord:
+        """Lee un requisito de la respuesta, en el orden en que lo emitio el script."""
+        numero = lector.entero()
+        identificador = lector.texto()
+        outline = lector.texto()
+        return self._componer(module_path, numero, identificador, outline, attributes, lector)
+
     @staticmethod
-    def _a_registro(module_path: str, bruto: dict[str, Any]) -> RequirementRecord:
-        """Convierte un objeto del JSON de DXL en un ``RequirementRecord``.
+    def _componer(
+        module_path: str,
+        absolute_number: int,
+        identifier: str,
+        outline_number: str,
+        attributes: Sequence[str],
+        lector: protocolo.LectorCampos,
+    ) -> RequirementRecord:
+        """Construye el registro leyendo un valor por atributo pedido, en orden.
 
         Object Heading y Object Text se promueven a campos propios por ser los atributos de
         contenido predeterminados (RF-014); el resto queda en ``attributes``.
         """
-        atributos = dict(bruto.get("attributes", {}))
+        valores = {nombre: lector.texto() for nombre in attributes}
         return RequirementRecord(
             module_path=module_path,
-            absolute_number=int(bruto["absolute_number"]),
-            identifier=bruto.get("identifier", ""),
-            outline_number=bruto.get("outline_number", ""),
-            heading=atributos.pop("Object Heading", ""),
-            text=atributos.pop("Object Text", ""),
-            attributes=atributos,
+            absolute_number=absolute_number,
+            identifier=identifier,
+            outline_number=outline_number,
+            heading=valores.pop("Object Heading", ""),
+            text=valores.pop("Object Text", ""),
+            attributes=valores,
         )
 
     def close(self) -> None:

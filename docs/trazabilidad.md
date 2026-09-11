@@ -12,7 +12,7 @@ Alcance cubierto: hitos H0 a H7. Queda planificado H8 (Graph-RAG).
 
 | ID | Modulo | Verificacion | Estado |
 |---|---|---|---|
-| RF-001 | `sources/doors/client.py` | `test_doors_client.py` (COM simulado) | Manual |
+| RF-001 | `sources/doors/client.py` | `test_doors_client.py` (COM simulado). Sesion y apertura de modulo **validadas contra DOORS real** el 11/09/2026 | Manual |
 | RF-002 | `sources/doors/client.py::_crear_sesion` | Revisado: usa `Dispatch`, no `GetActiveObject` | Manual |
 | RF-003 | `sources/doors/client.py::start_session` | `test_doors_client.py::test_consultar_sin_sesion_dice_que_hacer` | Manual |
 | RF-004 | `sources/doors/dxl.py::_abrir_modulo` | `test_dxl_generation.py::test_los_modulos_se_abren_siempre_en_lectura` | Implementado |
@@ -51,7 +51,7 @@ Alcance cubierto: hitos H0 a H7. Queda planificado H8 (Graph-RAG).
 | RF-033 | `dxl.py::script_search` (`regex`) | `test_dxl_generation.py`, `test_fake_source.py` | Implementado |
 | RF-034 | `models.py::SearchHit` | `test_mcp_tools.py::test_la_busqueda_indica_donde_encontro_la_coincidencia` | Implementado |
 | RF-035 | `dxl.py::script_get_links` | `test_dxl_generation.py::test_la_direccion_de_la_trazabilidad_filtra_los_bloques_generados` | Implementado |
-| RF-036 | `dxl.py::script_get_links` (`load_failures`) | `test_dxl_generation.py` | Manual |
+| RF-036 | `dxl.py::script_get_links`, `client.py::get_links` | `test_doors_client.py::test_los_modulos_origen_que_no_cargan_se_reportan` | Manual |
 | RF-037 | tool `get_requirement_links` (`oslc_links_included: false`) | `test_mcp_tools.py::test_la_trazabilidad_declara_que_no_cubre_oslc` | Implementado |
 
 ## 3.5 Seguridad y control de respuestas
@@ -59,7 +59,7 @@ Alcance cubierto: hitos H0 a H7. Queda planificado H8 (Graph-RAG).
 | ID | Modulo | Verificacion | Estado |
 |---|---|---|---|
 | RF-040 | `servers/doors_server.py` (catalogo cerrado) | `test_mcp_tools.py::test_no_existe_ninguna_herramienta_de_dxl_arbitrario` | Implementado |
-| RF-041 | `dxl.py::escape_dxl_string`, `literal_json` | `test_dxl_generation.py` (inyeccion por ruta, termino y atributo) | Implementado |
+| RF-041 | `dxl.py::escape_dxl_string` (escapado de **entrada**) | `test_dxl_generation.py` (inyeccion por ruta, termino y atributo) | Implementado |
 | RF-042 | `servers/doors_server.py::SOLO_LECTURA` | `test_mcp_tools.py::test_todas_las_herramientas_se_declaran_de_solo_lectura` | Implementado |
 | RF-043 | `servers/response.py::serializar` | `test_mcp_tools.py::test_el_limite_duro_de_la_configuracion_se_aplica_de_verdad` | Implementado |
 | RF-044 | `servers/response.py::serializar` | `test_mcp_tools.py` (recorte anunciado y error de tamano) | Implementado |
@@ -117,6 +117,7 @@ de desarrollo no tiene salida hacia endpoints externos. El procedimiento esta en
 | RNF-006 | `com_worker.py::_ejecutar_con_reintentos` | `test_com_worker.py::test_los_errores_de_doors_ocupado_se_reintentan` | Implementado |
 | RNF-007 | `dxl.py::build_preamble` | `test_dxl_generation.py::test_el_watchdog_de_dxl_es_configurable` | Implementado |
 | RNF-008 | `dxl.py::build_preamble` | `test_dxl_generation.py::test_el_preambulo_termina_en_un_salto_de_linea_real` | Implementado |
+| ADR-014 | `dxl.py`, `sources/doors/protocolo.py` | `test_dxl_generation.py::test_el_dxl_generado_no_contiene_ninguna_secuencia_de_escape` | Implementado |
 | RNF-009 | `servers/doors_server.py::configurar_logging` | Revisado: `logging` a `sys.stderr`, sin `print` a stdout | Implementado |
 | RNF-010 | `config.py`, `servers/response.py` | `test_mcp_tools.py` | Implementado |
 | RNF-011 | `sources/base.py::truncar`, `dxl.py` (`cut`) | `test_fake_source.py::test_el_truncado_deja_marca_visible` | Implementado |

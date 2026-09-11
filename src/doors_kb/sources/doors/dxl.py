@@ -1,28 +1,32 @@
 """Generacion de scripts DXL.
 
 Este modulo no habla con DOORS: solo construye texto. Esa separacion permite probar en
-cualquier plataforma las dos cosas que ya fallaron una vez en este proyecto (seccion 10):
+cualquier plataforma las cosas que ya fallaron en este proyecto (seccion 10 y ADR-014).
 
-* **El salto de linea del preambulo** (RNF-008). Una version anterior generaba la secuencia
-  ``\\n`` literal en lugar de un salto real, y el interprete DXL rompia el parseo con un
-  error confuso. ``test_dxl_generation.py`` lo vigila.
-* **El escapado de valores** (RF-041). Todo lo que Python inserta en un script pasa por
-  ``escape_dxl_string``. No existe ninguna via para que un agente ejecute DXL arbitrario
-  (RF-040, ADR-003): los scripts se construyen aqui, con plantillas cerradas.
+**Los scripts no construyen JSON.** Emiten cada valor precedido de su longitud
+(``15:Absolute Number``) y es Python quien monta el JSON. El motivo esta en ADR-014: al
+generar JSON dentro de DXL habia tres lenguajes de escapado encadenados -Python, DXL y
+JSON- y bastaba equivocarse en uno para producir una respuesta corrupta. Con este formato
+**no hay ni una secuencia de escape en el DXL generado**, asi que no puede haber errores de
+escapado en la salida.
 
-Los scripts devuelven su resultado como JSON mediante ``oleSetResult``, que es lo que la
-capa Automation recoge despues.
+Sigue existiendo escapado de **entrada** (``escape_dxl_string``): los valores que Python
+inserta en un script -una ruta de modulo, un termino de busqueda- tienen que ser literales
+cerrados para que un agente no pueda inyectar codigo DXL (RF-041, ADR-003).
 
-Recorrido por cursor (ADR-006): los scripts de paginacion localizan el objeto del cursor
-con ``object(absno, m)`` y siguen con ``next(o)``, en lugar de recorrer el modulo desde el
+Recorrido por cursor (ADR-006): los scripts de paginacion localizan el objeto del cursor con
+``object(absno, m)`` y siguen con ``next(o)``, en lugar de recorrer el modulo desde el
 principio descartando objetos. Es la diferencia entre coste lineal y coste cuadratico, y la
 causa de los *DXL Execution Timeout* que motivaron el cambio (seccion 7.1).
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
+
+# Marca al principio de cada respuesta. Permite distinguir una respuesta del protocolo de un
+# mensaje de error del interprete DXL, que llega como texto suelto.
+PROTOCOLO = "DKB1"
 
 # Caracteres que hay que escapar dentro de un literal de cadena DXL.
 _ESCAPES = {
@@ -73,47 +77,36 @@ def build_preamble(run_limit_cycles: int = 0) -> str:
 # Funciones auxiliares que se inyectan en todos los scripts
 # ---------------------------------------------------------------------------------------
 
-# Escapa un valor de DOORS para poder emitirlo dentro del JSON de respuesta. Se hace en DXL
-# y no en Python porque el texto de los requisitos llega ya dentro de la cadena resultado.
-_JSON_HELPERS = """
-string jsonEscape(string s) {
-    Buffer b = create
-    int i
-    for (i = 0; i < length(s); i++) {
-        char c = s[i]
-        if (c == '"') { b += "\\\\\\"" }
-        else if (c == '\\\\') { b += "\\\\\\\\" }
-        else if (c == '\\n') { b += "\\\\n" }
-        else if (c == '\\r') { b += "\\\\r" }
-        else if (c == '\\t') { b += "\\\\t" }
-        else { b += c }
-    }
-    string r = stringOf b
-    delete b
-    return r
+# Emite un valor con su longitud delante. Ni comillas, ni llaves, ni escapes: un valor puede
+# contener cualquier cosa -comillas, backslashes, saltos de linea- sin tratamiento especial,
+# porque el lector de Python no busca delimitadores, cuenta caracteres.
+_HELPERS = """
+string ns(string s) {
+    string n = length(s) ""
+    return n ":" s
 }
 
-// Recorta dejando sitio para el marcador, de modo que el resultado nunca supere maxChars:
-// el limite pactado con el agente tiene que cumplirse tambien cuando hay recorte (RNF-011).
+string nsInt(int v) {
+    string s = v ""
+    return ns(s)
+}
+
+string nsBool(bool v) {
+    if (v) { return ns("1") }
+    return ns("0")
+}
+
+// Recorta dejando sitio para el marcador, de modo que el resultado nunca supere maxChars.
+// El marcador importa: sin el, el agente no puede distinguir un texto corto de uno recortado
+// y podria concluir que un requisito dice menos de lo que dice (RNF-011).
 string cut(string s, int maxChars) {
     if (maxChars <= 0) { return s }
     if (length(s) <= maxChars) { return s }
-    int marca = 14  // longitud de "... [truncado]"
+    int marca = 14
     if (maxChars <= marca) { return s[0 : maxChars - 1] }
     return s[0 : maxChars - marca - 1] "... [truncado]"
 }
 """
-
-
-def literal_json(datos: object) -> str:
-    """Convierte un valor de Python en un literal de cadena DXL que contiene su JSON.
-
-    Hay **dos** niveles de escapado y confundirlos es facil: el JSON escapa las comillas del
-    dato, y DXL escapa a su vez las comillas del JSON. Construir el JSON con ``json.dumps``
-    y escapar el resultado entero garantiza que ambos niveles quedan bien, incluso cuando el
-    dato lleva comillas (por ejemplo, una ruta de modulo con un nombre raro).
-    """
-    return '"' + escape_dxl_string(json.dumps(datos, ensure_ascii=False)) + '"'
 
 
 def _abrir_modulo(module_path: str) -> str:
@@ -124,11 +117,15 @@ def _abrir_modulo(module_path: str) -> str:
     ello producia errores ``NO_MODULE`` (seccion 10, ADR-002).
     """
     ruta = escape_dxl_string(module_path)
-    error = literal_json({"error": "NO_MODULE", "module_path": module_path})
     return f"""
 Module m = read("{ruta}", false)
 if (null m) {{
-    oleSetResult({error})
+    Buffer e = create
+    e += ns("{PROTOCOLO}")
+    e += ns("ERROR")
+    e += ns("NO_MODULE")
+    oleSetResult(stringOf e)
+    delete e
     halt
 }}
 """
@@ -181,21 +178,22 @@ def _filtros_de_objeto(
     return "    if (" + " || ".join(f"({c})" for c in condiciones) + ") { o = next(o); continue }\n"
 
 
-def _emitir_atributos(attributes: Sequence[str], max_attribute_chars: int) -> str:
-    """Genera el fragmento que serializa los atributos pedidos de un objeto.
+def _emitir_atributos(
+    attributes: Sequence[str], max_attribute_chars: int, buffer: str = "b"
+) -> str:
+    """Genera el fragmento que emite los atributos pedidos de un objeto, en orden.
 
     Los nombres se insertan escapados y como literales cerrados: no hay forma de que un
-    nombre de atributo se convierta en codigo DXL (RF-041).
+    nombre de atributo se convierta en codigo DXL (RF-041). El lector de Python conoce el
+    orden, asi que no hace falta emitir los nombres.
     """
-    piezas = []
-    for indice, nombre in enumerate(attributes):
+    lineas = []
+    for nombre in attributes:
         escapado = escape_dxl_string(nombre)
-        separador = "" if indice == 0 else '"," '
-        piezas.append(
-            f'    b += {separador}"\\"{escapado}\\": \\""'
-            f' cut(jsonEscape(o."{escapado}" ""), {int(max_attribute_chars)}) "\\""\n'
+        lineas.append(
+            f'    {buffer} += ns(cut(o."{escapado}" "", {int(max_attribute_chars)}))\n'
         )
-    return "".join(piezas)
+    return "".join(lineas)
 
 
 # ---------------------------------------------------------------------------------------
@@ -204,35 +202,42 @@ def _emitir_atributos(attributes: Sequence[str], max_attribute_chars: int) -> st
 
 
 def script_list_attributes(module_path: str, run_limit_cycles: int = 0) -> str:
-    """Lista los atributos de objeto del modulo con sus metadatos (RF-010, RF-011)."""
+    """Lista los atributos de objeto del modulo con sus metadatos (RF-010, RF-011).
+
+    Formato emitido: ``ATTRS``, numero de atributos y, por cada uno, nombre, tipo, si es de
+    sistema, si es multivaluado, cuantos valores de enumeracion tiene y esos valores.
+    """
     return (
         build_preamble(run_limit_cycles)
-        + _JSON_HELPERS
+        + _HELPERS
         + _abrir_modulo(module_path)
-        + """
+        + f"""
 Buffer b = create
-b += "{\\"attributes\\": ["
+b += ns("{PROTOCOLO}")
+b += ns("ATTRS")
+
+int total = 0
+AttrDef adc
+for adc in m do {{
+    if (adc.object) {{ total++ }}
+}}
+b += nsInt(total)
+
 AttrDef ad
-bool primero = true
-for ad in m do {
-    if (!ad.object) { continue }
-    if (!primero) { b += "," }
-    primero = false
+for ad in m do {{
+    if (!ad.object) {{ continue }}
     AttrType at = ad.type
-    b += "{\\"name\\": \\"" jsonEscape(ad.name) "\\""
-    b += ", \\"type\\": \\"" jsonEscape(at.name "") "\\""
-    b += ", \\"is_object\\": true"
-    b += ", \\"is_system\\": " (ad.system ? "true" : "false")
-    b += ", \\"multi_valued\\": " (ad.multi ? "true" : "false")
-    b += ", \\"enum_values\\": ["
+    b += ns(ad.name)
+    b += ns(at.name "")
+    b += nsBool(ad.system)
+    b += nsBool(ad.multi)
+    int n = at.size
+    b += nsInt(n)
     int i
-    for (i = 0; i < at.size; i++) {
-        if (i > 0) { b += "," }
-        b += "\\"" jsonEscape(at.strings[i]) "\\""
-    }
-    b += "]}"
-}
-b += "]}"
+    for (i = 0; i < n; i++) {{
+        b += ns(at.strings[i])
+    }}
+}}
 oleSetResult(stringOf b)
 delete b
 """
@@ -253,40 +258,42 @@ def script_fetch_page(
 ) -> str:
     """Lee una pagina de requisitos a partir del cursor (RF-020, RF-057, RF-058).
 
-    Devuelve ``next_cursor`` solo si quedan objetos por recorrer. Que valga ``null`` es la
-    unica senal de que el modulo se ha recorrido entero, y de ella depende que el
-    sincronizador pueda marcar ausentes como eliminados (RF-061).
+    Emite ``PAGE``, el cursor siguiente (vacio si se llego al final) y, por cada requisito,
+    su Absolute Number, identificador, outline number y los atributos pedidos en orden.
+
+    Que el cursor siguiente venga vacio es la unica senal de que el modulo se ha recorrido
+    entero, y de ella depende que el sincronizador pueda marcar ausentes como eliminados
+    (RF-061). Por eso los requisitos se acumulan en un buffer aparte: el cursor no se conoce
+    hasta terminar el recorrido, y tiene que ir antes que los datos.
     """
     filtros = _filtros_de_objeto(include_deleted, include_table_internals, respect_display_set)
     return (
         build_preamble(run_limit_cycles)
-        + _JSON_HELPERS
+        + _HELPERS
         + _abrir_modulo(module_path)
         + _posicionar_cursor(cursor)
         + f"""
 Buffer b = create
-b += "{{\\"records\\": ["
+Buffer datos = create
 int emitidos = 0
 int ultimo = -1
-bool primero = true
 bool agotado = true
 while (!null o) {{
     if (emitidos >= {int(page_size)}) {{ agotado = false; break }}
-{filtros}    if (!primero) {{ b += "," }}
-    primero = false
-    ultimo = (int)(o."Absolute Number")
-    b += "{{\\"absolute_number\\": " ultimo ""
-    b += ", \\"identifier\\": \\"" jsonEscape(identifier(o)) "\\""
-    b += ", \\"outline_number\\": \\"" jsonEscape(number(o)) "\\""
-    b += ", \\"attributes\\": {{"
-{_emitir_atributos(attributes, max_attribute_chars)}    b += "}}}}"
-    emitidos++
+{filtros}    ultimo = (int)(o."Absolute Number")
+    datos += nsInt(ultimo)
+    datos += ns(identifier(o))
+    datos += ns(number(o))
+{_emitir_atributos(attributes, max_attribute_chars, "datos")}    emitidos++
     o = next(o)
 }}
-b += "], \\"next_cursor\\": "
-if (agotado) {{ b += "null" }} else {{ b += ultimo "" }}
-b += "}}"
+b += ns("{PROTOCOLO}")
+b += ns("PAGE")
+if (agotado) {{ b += ns("") }} else {{ b += nsInt(ultimo) }}
+b += nsInt(emitidos)
+b += stringOf datos
 oleSetResult(stringOf b)
+delete datos
 delete b
 """
     )
@@ -300,25 +307,31 @@ def script_get_requirement(
     max_attribute_chars: int = 20_000,
     run_limit_cycles: int = 0,
 ) -> str:
-    """Obtiene un objeto concreto por su Absolute Number (RF-021)."""
+    """Obtiene un objeto concreto por su Absolute Number (RF-021).
+
+    Emite ``REQ`` y un indicador de si existe; solo si existe vienen despues sus datos.
+    """
     return (
         build_preamble(run_limit_cycles)
-        + _JSON_HELPERS
+        + _HELPERS
         + _abrir_modulo(module_path)
         + f"""
+Buffer b = create
+b += ns("{PROTOCOLO}")
+b += ns("REQ")
 Object o = object({int(absolute_number)}, m)
 if (null o) {{
-    oleSetResult({literal_json({"record": None})})
+    b += nsBool(false)
+    oleSetResult(stringOf b)
+    delete b
     halt
 }}
-Buffer b = create
-b += "{{\\"record\\": {{\\"absolute_number\\": " (int)(o."Absolute Number") ""
-b += ", \\"identifier\\": \\"" jsonEscape(identifier(o)) "\\""
-b += ", \\"outline_number\\": \\"" jsonEscape(number(o)) "\\""
-b += ", \\"is_deleted\\": " (isDeleted(o) ? "true" : "false")
-b += ", \\"attributes\\": {{"
-{_emitir_atributos(attributes, max_attribute_chars)}b += "}}}}}}"
-oleSetResult(stringOf b)
+b += nsBool(true)
+b += nsInt((int)(o."Absolute Number"))
+b += ns(identifier(o))
+b += ns(number(o))
+b += nsBool(isDeleted(o))
+{_emitir_atributos(attributes, max_attribute_chars)}oleSetResult(stringOf b)
 delete b
 """
     )
@@ -340,14 +353,12 @@ def script_search(
     """Busca texto literal o expresion regular dentro del modulo (RF-030..RF-034).
 
     La busqueda ocurre **dentro de DOORS**: al agente solo llegan las coincidencias, no el
-    modulo entero (RF-030). La respuesta indica en que atributo se encontro y en que
+    modulo entero (RF-030). Cada coincidencia indica en que atributo se encontro y en que
     posicion (RF-034).
     """
     patron = escape_dxl_string(query)
     comparacion = (
-        f'Regexp patron = regexp2("{patron}")'
-        if regex
-        else f'string aguja = "{patron}"'
+        f'Regexp patron = regexp2("{patron}")' if regex else f'string aguja = "{patron}"'
     )
     if regex:
         deteccion = "        if (patron valor) { encontrado = true; posicion = start(patron) }"
@@ -366,17 +377,16 @@ def script_search(
     filtros = _filtros_de_objeto(False, False, respect_display_set)
     return (
         build_preamble(run_limit_cycles)
-        + _JSON_HELPERS
+        + _HELPERS
         + _abrir_modulo(module_path)
         + _posicionar_cursor(cursor)
         + f"""
 {comparacion}
 string nombres[] = {{{nombres}}}
 Buffer b = create
-b += "{{\\"hits\\": ["
+Buffer datos = create
 int emitidos = 0
 int ultimo = -1
-bool primero = true
 bool agotado = true
 while (!null o) {{
     if (emitidos >= {int(page_size)}) {{ agotado = false; break }}
@@ -388,24 +398,25 @@ while (!null o) {{
         int posicion = -1
 {deteccion}
         if (encontrado) {{
-            if (!primero) {{ b += "," }}
-            primero = false
-            b += "{{\\"absolute_number\\": " ultimo ""
-            b += ", \\"identifier\\": \\"" jsonEscape(identifier(o)) "\\""
-            b += ", \\"outline_number\\": \\"" jsonEscape(number(o)) "\\""
-            b += ", \\"matched_attribute\\": \\"" jsonEscape(nombres[j]) "\\""
-            b += ", \\"match_start\\": " posicion ""
-            b += ", \\"value\\": \\"" cut(jsonEscape(valor), {int(max_attribute_chars)}) "\\"}}"
+            datos += nsInt(ultimo)
+            datos += ns(identifier(o))
+            datos += ns(number(o))
+            datos += ns(nombres[j])
+            datos += nsInt(posicion)
+            datos += ns(cut(valor, {int(max_attribute_chars)}))
             emitidos++
             break
         }}
     }}
     o = next(o)
 }}
-b += "], \\"next_cursor\\": "
-if (agotado) {{ b += "null" }} else {{ b += ultimo "" }}
-b += "}}"
+b += ns("{PROTOCOLO}")
+b += ns("SEARCH")
+if (agotado) {{ b += ns("") }} else {{ b += nsInt(ultimo) }}
+b += nsInt(emitidos)
+b += stringOf datos
 oleSetResult(stringOf b)
+delete datos
 delete b
 """
     )
@@ -417,8 +428,8 @@ def script_get_links(
     """Obtiene la trazabilidad estandar de un objeto (RF-035, RF-036).
 
     Para los enlaces entrantes hay que cargar en lectura los modulos origen, cosa que puede
-    fallar por permisos; el script lo reporta en ``load_failures`` en vez de callarselo
-    (RF-036). No cubre enlaces externos OSLC (RF-037).
+    fallar por permisos; el script lo reporta en lugar de callarselo (RF-036). No cubre
+    enlaces externos OSLC (RF-037).
     """
     salientes = direction in ("outgoing", "both")
     entrantes = direction in ("incoming", "both")
@@ -430,12 +441,11 @@ Link l
 for l in o -> "*" do {
     Object destino = target(l)
     if (null destino) { continue }
-    if (!primero) { b += "," }
-    primero = false
-    b += "{\\"direction\\": \\"outgoing\\""
-    b += ", \\"target_module\\": \\"" jsonEscape(fullName(module(destino))) "\\""
-    b += ", \\"target_absolute_number\\": " (int)(destino."Absolute Number") ""
-    b += ", \\"link_module\\": \\"" jsonEscape(l."LinkModuleName" "") "\\"}"
+    datos += ns("outgoing")
+    datos += ns(fullName(module(destino)))
+    datos += nsInt((int)(destino."Absolute Number"))
+    datos += ns(l."LinkModuleName" "")
+    enlaces++
 }
 """
         )
@@ -447,46 +457,52 @@ for l in o -> "*" do {
 ModName_ otro
 for otro in o <- "*" do {
     if (null read(fullName(otro), false)) {
-        if (!primerFallo) { f += "," }
-        primerFallo = false
-        f += "\\"" jsonEscape(fullName(otro)) "\\""
+        fallos += ns(fullName(otro))
+        nFallos++
     }
 }
 Link li
 for li in o <- "*" do {
     Object origen = source(li)
     if (null origen) { continue }
-    if (!primero) { b += "," }
-    primero = false
-    b += "{\\"direction\\": \\"incoming\\""
-    b += ", \\"source_module\\": \\"" jsonEscape(fullName(module(origen))) "\\""
-    b += ", \\"source_absolute_number\\": " (int)(origen."Absolute Number") ""
-    b += ", \\"link_module\\": \\"" jsonEscape(li."LinkModuleName" "") "\\"}"
+    datos += ns("incoming")
+    datos += ns(fullName(module(origen)))
+    datos += nsInt((int)(origen."Absolute Number"))
+    datos += ns(li."LinkModuleName" "")
+    enlaces++
 }
 """
         )
 
     return (
         build_preamble(run_limit_cycles)
-        + _JSON_HELPERS
+        + _HELPERS
         + _abrir_modulo(module_path)
         + f"""
+Buffer b = create
+b += ns("{PROTOCOLO}")
+b += ns("LINKS")
 Object o = object({int(absolute_number)}, m)
 if (null o) {{
-    oleSetResult({literal_json({"links": [], "error": "OBJECT_NOT_FOUND"})})
+    b += nsBool(false)
+    oleSetResult(stringOf b)
+    delete b
     halt
 }}
-Buffer b = create
-Buffer f = create
-bool primero = true
-bool primerFallo = true
-b += "{{\\"links\\": ["
-f += "\\"load_failures\\": ["
+b += nsBool(true)
+
+Buffer datos = create
+Buffer fallos = create
+int enlaces = 0
+int nFallos = 0
 {"".join(bloques)}
-b += "], "
-f += "], \\"oslc_links_included\\": false}}"
-oleSetResult(stringOf b stringOf f)
+b += nsInt(nFallos)
+b += stringOf fallos
+b += nsInt(enlaces)
+b += stringOf datos
+oleSetResult(stringOf b)
+delete fallos
+delete datos
 delete b
-delete f
 """
     )
