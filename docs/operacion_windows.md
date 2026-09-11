@@ -17,7 +17,25 @@ python -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev,win]"
 ```
 
-## 1. Comprobar la instalacion sin tocar DOORS
+## 1. Comprobar que DXL se comporta como el proyecto espera
+
+**Hazlo antes que nada.** La capa DXL no se puede probar fuera de Windows, asi que este
+comando verifica una por una las primitivas del lenguaje que usa el proyecto contra tu
+instalacion:
+
+```powershell
+.\.venv\Scripts\doors-selftest --module "/Proyecto/Requisitos/Modulo"
+```
+
+Abre antes la ventana **DXL output** en DOORS (Tools -> Edit DXL): ahi aparece el mensaje del
+interprete de cada prueba que falle.
+
+La salida es una tabla de primitivas con OK o FALLA, y para cada fallo dice a que capacidad
+del proyecto afecta. Las dos primeras pruebas son deliberadamente redundantes -la misma
+conversion en los dos ordenes posibles- porque confirmar cual de las dos formas acepta tu
+DOORS es justo lo que evita el error `incorrect arguments for (=)`.
+
+## 2. Comprobar la instalacion sin tocar DOORS
 
 Antes de involucrar a DOORS, conviene descartar problemas del propio proyecto:
 
@@ -28,7 +46,7 @@ Antes de involucrar a DOORS, conviene descartar problemas del propio proyecto:
 
 Si esto falla, el problema no esta en DOORS.
 
-## 2. Abrir la sesion Automation
+## 3. Abrir la sesion Automation
 
 ```powershell
 $env:DOORS_MODULE_PATH = "/Proyecto/Requisitos/Requisitos del sistema"
@@ -39,7 +57,7 @@ Python abre **una ventana nueva** de DOORS. Hay que autenticarse **en esa ventan
 una que ya tuvieras abierta: la sesion de Automation es independiente de la sesion manual
 (ADR-002). Si tarda mas de 30 segundos, sube `DOORS_START_TIMEOUT_SECONDS`.
 
-## 3. Primera sincronizacion
+## 4. Primera sincronizacion
 
 Configuracion recomendada para la primera pasada de un modulo grande:
 
@@ -58,7 +76,7 @@ $env:DOORS_DXL_TIMEOUT_SECONDS  = "90"   # el control lo lleva el timeout de Pyt
 `--verbose` imprime una linea por pagina con su cursor: es como se comprueba CA-006 (la
 duracion por pagina debe mantenerse estable segun avanza el modulo, no crecer).
 
-## 4. Verificar los criterios de aceptacion
+## 5. Verificar los criterios de aceptacion
 
 | Criterio | Como comprobarlo |
 |---|---|
@@ -76,7 +94,7 @@ Consulta del historial:
 sqlite3 .\doors_kb.sqlite3 "SELECT status, requirements_seen, inserted, updated, unchanged, deleted, completed_module, error FROM sync_runs ORDER BY id DESC LIMIT 5;"
 ```
 
-## 5. Busqueda local: indice y embeddings
+## 6. Busqueda local: indice y embeddings
 
 El indice textual se mantiene solo: cada `doors-sync` lo deja al dia. Si hiciera falta
 rehacerlo (por ejemplo tras cambiar de tokenizador), no hay que volver a consultar DOORS:
@@ -128,7 +146,7 @@ interprete DXL da un error de funcion desconocida al llamar a `list_requirements
 `src/doors_kb/sources/doors/dxl.py::_filtros_de_objeto`. El resto de las consultas no se ve
 afectado, porque el filtro solo se genera cuando se pide.
 
-## 6. Usar los servidores MCP desde VS Code
+## 7. Usar los servidores MCP desde VS Code
 
 ```json
 {
@@ -227,6 +245,13 @@ mensaje**: esta en DOORS.
 En la ventana de DOORS, abre **Tools -> Edit DXL** (o la ventana *DXL output* si ya esta
 abierta): ahi aparece el error del interprete con su numero de linea. Ese texto es lo unico
 que explica el fallo; pasalo tal cual al arreglarlo.
+
+### "incorrect arguments for (=)"
+
+La concatenacion de DXL exige que el primer operando sea una cadena. `string n = numero ""`
+no compila; hay que escribir `string n = "" numero`. Todas las conversiones del proyecto
+pasan por `aTexto()` (ADR-016). Ojo: el `""` **detras** de la lectura de un atributo
+(`o."Object Heading" ""`) es otro idioma distinto y ese si funciona.
 
 ### "wrong attribute type '...' for Enumeration"
 

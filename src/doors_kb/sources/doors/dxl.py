@@ -81,14 +81,20 @@ def build_preamble(run_limit_cycles: int = 0) -> str:
 # contener cualquier cosa -comillas, backslashes, saltos de linea- sin tratamiento especial,
 # porque el lector de Python no busca delimitadores, cuenta caracteres.
 _HELPERS = """
+// La concatenacion de DXL exige que el primer operando sea una cadena: escribir
+// `length(s) ""` produce "incorrect arguments for (=)". Por eso toda conversion de numero a
+// texto empieza por una cadena vacia, y por eso pasa por un unico sitio (ADR-016).
+string aTexto(int v) {
+    return "" v
+}
+
 string ns(string s) {
-    string n = length(s) ""
+    string n = aTexto(length(s))
     return n ":" s
 }
 
 string nsInt(int v) {
-    string s = v ""
-    return ns(s)
+    return ns(aTexto(v))
 }
 
 string nsBool(bool v) {

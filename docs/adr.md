@@ -254,3 +254,41 @@ nunca llego a leer, que es justo lo que RF-061 existe para impedir.
 **Consecuencias.** Un script que falla produce ahora un error explicito que remite a la
 ventana *DXL output* de DOORS, donde esta el mensaje del interprete. El testigo se inserta
 sin escapar en el script, asi que se valida que sea alfanumerico antes de generarlo.
+
+
+---
+
+## ADR-016 — Toda conversion de numero a texto pasa por un unico sitio
+
+**Decision.** El DXL generado convierte numeros a texto solo a traves de la funcion
+`aTexto(int)`, que empieza por una cadena vacia (`return "" v`).
+
+**Motivacion.** La tercera ejecucion contra DOORS real fallo con
+`<Line:4> incorrect arguments for (=)`: la linea era `string n = length(s) ""`. La
+concatenacion de DXL exige que el **primer** operando sea una cadena; con un numero delante
+no compila. El idioma inverso (`o."Atributo" ""`, coercion del valor de un atributo) si
+funciona, lo que hace facil confundirlos.
+
+**Consecuencias.** Hay un solo punto que corregir si la instalacion de DOORS resulta
+comportarse de otro modo, y un test que falla si alguien vuelve a escribir una conversion
+invertida.
+
+---
+
+## ADR-017 — Un comando que prueba las primitivas de DXL una por una
+
+**Decision.** `doors-selftest` ejecuta un script minimo e independiente por cada primitiva
+de DXL que usa el proyecto y muestra cuales funcionan contra la instalacion real.
+
+**Motivacion.** La capa DXL no se puede probar fuera de Windows, y tres ejecuciones
+seguidas contra DOORS real fallaron por tres suposiciones distintas sobre el lenguaje
+-`at.size` fuera de una enumeracion, el escapado de comillas y la direccion de la
+concatenacion-. Cada una costaba una sincronizacion completa, una captura de la ventana
+*DXL output* y una correccion, y solo revelaba el siguiente fallo al arreglar el anterior.
+Comprobarlas todas a la vez convierte esa cadena de descubrimientos en una sola ejecucion.
+
+**Consecuencias.** Las pruebas no usan las funciones auxiliares del protocolo a proposito:
+si una estuviera rota, todas fallarian y el diagnostico no distinguiria la causa. Cada
+prueba explica ademas que capacidad del proyecto queda afectada si falla, para que la tabla
+diga no solo que algo no va, sino que consecuencias tiene. Cuando el proyecto empiece a usar
+una primitiva nueva, hay que anadir su prueba: un test lo recuerda.

@@ -278,3 +278,20 @@ def test_un_testigo_no_alfanumerico_se_rechaza():
     """El testigo se inserta sin escapar en el script: tiene que ser inofensivo por diseno."""
     with pytest.raises(ValueError, match="alfanumerico"):
         dxl.script_list_attributes("/P/R", 'x"); halt; //')
+
+
+def test_ninguna_conversion_de_numero_empieza_por_el_numero():
+    """La regresion que aborto la tercera ejecucion contra DOORS real.
+
+    DXL exige que el primer operando de una concatenacion sea una cadena:
+    `string n = length(s) ""` produce "incorrect arguments for (=)". Todas las conversiones
+    pasan ahora por aTexto(), que empieza por una cadena vacia.
+    """
+    script = dxl.script_fetch_page("/P/R", ["Object Text"], "testigo01")
+
+    assert 'return "" v' in script
+    for linea in script.split("\n"):
+        codigo = linea.strip()
+        if codigo.startswith("//"):
+            continue
+        assert not codigo.endswith('""'), f"concatenacion invertida en: {codigo}"

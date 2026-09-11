@@ -52,6 +52,13 @@ python examples/demo_busqueda_hibrida.py # los tres modos de busqueda
 
 ## Sincronizacion contra DOORS real
 
+Antes de la primera sincronizacion conviene comprobar que DXL se comporta como el proyecto
+espera; la tabla dice que primitivas funcionan en tu instalacion y a que afecta cada fallo:
+
+```powershell
+doors-selftest --module "/Proyecto/Requisitos/Requisitos del sistema"
+```
+
 ```powershell
 $env:DOORS_DXL_RUN_LIMIT_CYCLES = "0"
 $env:DOORS_DXL_TIMEOUT_SECONDS  = "90"
