@@ -109,7 +109,7 @@ def test_los_valores_viajan_con_su_longitud_delante():
     script = dxl.script_list_attributes("/Proyecto/Reqs", T)
 
     assert "string ns(string s)" in script
-    assert 'return n ":" s' in script
+    assert 'return cabecera ":" s' in script
     assert "b += ns(ad.name)" in script
 
 
@@ -280,18 +280,31 @@ def test_un_testigo_no_alfanumerico_se_rechaza():
         dxl.script_list_attributes("/P/R", 'x"); halt; //')
 
 
-def test_ninguna_conversion_de_numero_empieza_por_el_numero():
-    """La regresion que aborto la tercera ejecucion contra DOORS real.
+def test_la_conversion_de_numero_pone_el_numero_delante():
+    """Direccion confirmada contra DOORS real con doors-selftest.
 
-    DXL exige que el primer operando de una concatenacion sea una cadena:
-    `string n = length(s) ""` produce "incorrect arguments for (=)". Todas las conversiones
-    pasan ahora por aTexto(), que empieza por una cadena vacia.
+    Las dos formas se probaron sobre la instalacion: `42 ""` funciona y `"" 42` no. Una
+    version anterior de este proyecto asumio lo contrario, y el autodiagnostico fue lo que
+    lo desmintio.
     """
     script = dxl.script_fetch_page("/P/R", ["Object Text"], "testigo01")
 
-    assert 'return "" v' in script
+    assert 'return v ""' in script
     for linea in script.split("\n"):
         codigo = linea.strip()
         if codigo.startswith("//"):
             continue
-        assert not codigo.endswith('""'), f"concatenacion invertida en: {codigo}"
+        assert '"" ' not in codigo, f"conversion invertida en: {codigo}"
+
+
+def test_la_longitud_se_convierte_usando_una_variable_intermedia():
+    """`length(s) ""` se interpreta como `length(s "")` y devuelve un entero.
+
+    Ese fue el "incorrect arguments for (=)" de la linea 4: la concatenacion se metia dentro
+    de los parentesis de la llamada. Con una variable intermedia no hay ambiguedad.
+    """
+    script = dxl.script_fetch_page("/P/R", ["Object Text"], "testigo01")
+
+    assert "int n = length(s)" in script
+    codigo = [linea for linea in script.split("\n") if not linea.strip().startswith("//")]
+    assert not any('length(s) ""' in linea for linea in codigo)

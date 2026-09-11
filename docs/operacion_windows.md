@@ -248,10 +248,13 @@ que explica el fallo; pasalo tal cual al arreglarlo.
 
 ### "incorrect arguments for (=)"
 
-La concatenacion de DXL exige que el primer operando sea una cadena. `string n = numero ""`
-no compila; hay que escribir `string n = "" numero`. Todas las conversiones del proyecto
-pasan por `aTexto()` (ADR-016). Ojo: el `""` **detras** de la lectura de un atributo
-(`o."Object Heading" ""`) es otro idioma distinto y ese si funciona.
+Casi siempre es una conversion de numero a texto mal escrita. En esta instalacion la forma
+valida es **el numero delante**: `string n = valor ""`, no `string n = "" valor`.
+
+Y ojo con concatenar directamente el resultado de una llamada: `length(s) ""` se interpreta
+como `length(s "")` y devuelve un entero, de modo que la asignacion a una cadena falla. Hay
+que guardar el resultado en una variable primero. Todas las conversiones del proyecto pasan
+por `aTexto()` (ADR-016).
 
 ### "wrong attribute type '...' for Enumeration"
 

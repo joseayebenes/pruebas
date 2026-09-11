@@ -39,44 +39,78 @@ class Prueba:
 # Las pruebas van de lo mas basico a lo mas especifico: si falla la conversion de numeros,
 # lo demas da igual.
 PRUEBAS: tuple[Prueba, ...] = (
+    # --- Conversion de numero a texto -----------------------------------------------------
+    # Las dos formas se prueban a proposito: confirmar cual acepta DOORS es lo que evita el
+    # error "incorrect arguments for (=)". La primera ejecucion real descarto `"" v`.
     Prueba(
-        "concatenacion con la cadena primero",
-        'string valor = "" 42',
+        "conversion: numero delante (v \"\")",
+        'string valor = 42 ""',
         necesita_modulo=False,
         esperado="42",
         porque_importa="Toda conversion de numero a texto depende de esta forma.",
     ),
     Prueba(
-        "concatenacion con el numero primero",
-        'string valor = 42 ""',
+        "conversion: cadena delante (\"\" v)",
+        'string valor = "" 42',
         necesita_modulo=False,
         esperado="42",
-        porque_importa="Si falla, confirma por que hay que empezar por una cadena.",
+        porque_importa="Si falla, confirma que hay que poner el numero delante.",
     ),
     Prueba(
-        "length de una cadena",
-        'string valor = "" length("abcde")',
+        "length con variable intermedia",
+        'int n = length("abcde")\nstring valor = n ""',
         necesita_modulo=False,
         esperado="5",
         porque_importa="Es la longitud que precede a cada campo del protocolo.",
     ),
     Prueba(
+        "length concatenado del tiron",
+        'string valor = length("abcde") ""',
+        necesita_modulo=False,
+        esperado="5",
+        porque_importa=(
+            "Si falla, confirma que la concatenacion se mete dentro de los parentesis de la "
+            "llamada y hay que usar una variable intermedia."
+        ),
+    ),
+    # --- Modulo y recorrido ---------------------------------------------------------------
+    Prueba(
         "abrir el modulo en lectura",
-        'string valor = fullName(m)',
+        "string valor = fullName(m)",
         porque_importa="Sin esto no hay nada mas que probar (RF-004).",
     ),
     Prueba(
         "recorrido con first y next",
         "Object o = first(m)\nint c = 0\n"
         "while (!null o && c < 5) { c++; o = next(o) }\n"
-        'string valor = "" c',
+        'string valor = c ""',
         esperado="5",
         porque_importa="Es el recorrido por cursor de la paginacion (ADR-006).",
     ),
+    # --- Identidad de un objeto -----------------------------------------------------------
     Prueba(
-        "Absolute Number de un objeto",
-        'Object o = first(m)\nstring valor = "" ((int)(o."Absolute Number"))',
+        "Absolute Number con cast explicito",
+        'Object o = first(m)\nint n = (int)(o."Absolute Number")\nstring valor = n ""',
         porque_importa="Es la identidad logica de un requisito (RF-052).",
+    ),
+    Prueba(
+        "Absolute Number sin cast",
+        'Object o = first(m)\nint n = o."Absolute Number"\nstring valor = n ""',
+        porque_importa="Alternativa si el cast explicito no esta permitido.",
+    ),
+    Prueba(
+        "object(absno, m) para saltar al cursor",
+        'Object o = first(m)\nint n = (int)(o."Absolute Number")\n'
+        'Object p = object(n, m)\nstring valor = (null p) ? "no" : "si"',
+        esperado="si",
+        porque_importa="Es lo que evita reescanear el modulo en cada pagina (RNF-015).",
+    ),
+    Prueba(
+        "object(m, absno) con los argumentos al reves",
+        'Object o = first(m)\nint n = (int)(o."Absolute Number")\n'
+        'Object p = object(m, n)\nstring valor = (null p) ? "no" : "si"',
+        esperado="si",
+        porque_importa="Alternativa si el orden de argumentos de object() es el contrario.",
     ),
     Prueba(
         "identifier(o)",
@@ -88,6 +122,7 @@ PRUEBAS: tuple[Prueba, ...] = (
         "Object o = first(m)\nstring valor = number(o)",
         porque_importa="Campo minimo de todo requisito devuelto (RF-025).",
     ),
+    # --- Filtros de objeto ----------------------------------------------------------------
     Prueba(
         "isDeleted(o)",
         'Object o = first(m)\nstring valor = isDeleted(o) ? "1" : "0"',
@@ -101,15 +136,9 @@ PRUEBAS: tuple[Prueba, ...] = (
     Prueba(
         "isVisible(o) para el display set",
         'Object o = first(m)\nstring valor = isVisible(o) ? "1" : "0"',
-        porque_importa="Es el predicado de RF-022, el unico que quedaba sin confirmar.",
+        porque_importa="Es el predicado de RF-022.",
     ),
-    Prueba(
-        "object(absno, m) para saltar al cursor",
-        "Object p = first(m)\nint n = (int)(p.\"Absolute Number\")\n"
-        'Object o = object(n, m)\nstring valor = (null o) ? "no" : "si"',
-        esperado="si",
-        porque_importa="Es lo que evita reescanear el modulo en cada pagina (RNF-015).",
-    ),
+    # --- Atributos ------------------------------------------------------------------------
     Prueba(
         "lectura de un atributo por nombre",
         'Object o = first(m)\nstring valor = o."Object Heading" ""',
@@ -117,7 +146,7 @@ PRUEBAS: tuple[Prueba, ...] = (
     ),
     Prueba(
         "at.type == attrEnumeration",
-        "AttrDef ad\nstring valor = \"ninguna\"\n"
+        'AttrDef ad\nstring valor = "ninguna"\n'
         "for ad in m do {\n"
         "    if (!ad.object) { continue }\n"
         "    AttrType at = ad.type\n"
@@ -125,9 +154,10 @@ PRUEBAS: tuple[Prueba, ...] = (
         "}",
         porque_importa="Guarda que evita el fallo 'wrong attribute type for Enumeration'.",
     ),
+    # --- Busqueda -------------------------------------------------------------------------
     Prueba(
         "index y lower para la busqueda literal",
-        'string valor = "" index(lower("ABCdef"), "cde")',
+        'int p = index(lower("ABCdef"), "cde")\nstring valor = p ""',
         necesita_modulo=False,
         esperado="2",
         porque_importa="Es la busqueda literal insensible a mayusculas (RF-031, RF-032).",
@@ -139,16 +169,17 @@ PRUEBAS: tuple[Prueba, ...] = (
         esperado="si",
         porque_importa="Es la busqueda por expresion regular (RF-033).",
     ),
+    # --- Trazabilidad ---------------------------------------------------------------------
     Prueba(
         "enlaces salientes",
         "Object o = first(m)\nint c = 0\nLink l\n"
-        'for l in o -> "*" do { c++ }\nstring valor = "" c',
+        'for l in o -> "*" do { c++ }\nstring valor = c ""',
         porque_importa="Es la trazabilidad saliente (RF-035).",
     ),
     Prueba(
         "enlaces entrantes",
         "Object o = first(m)\nint c = 0\nLink li\n"
-        'for li in o <- "*" do { c++ }\nstring valor = "" c',
+        'for li in o <- "*" do { c++ }\nstring valor = c ""',
         porque_importa="Es la trazabilidad entrante, que carga modulos origen (RF-036).",
     ),
 )

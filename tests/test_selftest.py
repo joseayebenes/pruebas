@@ -45,24 +45,34 @@ def test_las_pruebas_no_dependen_de_las_funciones_del_protocolo():
         assert "nsInt(" not in script
 
 
-def test_ninguna_prueba_convierte_un_numero_empezando_por_el_numero():
-    """La regresion que costo una ejecucion entera: DXL exige la cadena primero.
+def test_las_dos_direcciones_de_la_concatenacion_se_prueban():
+    """Confirmar cual acepta DOORS es lo que evita "incorrect arguments for (=)".
 
-    `length(s) ""` produce "incorrect arguments for (=)". Toda conversion de numero a texto
-    tiene que empezar por una cadena vacia.
-
-    El `""` final tras leer un atributo (`o."Object Heading" ""`) es otro idioma distinto
-    -coercion del valor del atributo a cadena- y ese si funciona: se vio en la primera
-    lectura real de atributos.
+    Se prueban las dos a proposito: sin la comparacion, un fallo aislado no distingue "esta
+    forma no vale" de "el problema es otro". Asi fue como se descubrio que la suposicion
+    inicial estaba al reves.
     """
-    for prueba in selftest.PRUEBAS:
-        if prueba.nombre == "concatenacion con el numero primero":
-            continue  # esta existe precisamente para confirmar que esa forma falla
-        for linea in prueba.cuerpo.split("\n"):
-            codigo = linea.strip()
-            if not codigo.endswith('""') or '."' in codigo:
-                continue
-            pytest.fail(f"conversion de numero invertida en: {codigo}")
+    cuerpos = [p.cuerpo for p in selftest.PRUEBAS]
+
+    assert 'string valor = 42 ""' in cuerpos
+    assert 'string valor = "" 42' in cuerpos
+
+
+def test_se_aisla_cada_sospechoso_de_los_fallos_conocidos():
+    """Una prueba que mezcla dos primitivas no dice cual de las dos falla.
+
+    Al analizar la primera tabla, siete de ocho fallos se explicaban por la concatenacion
+    invertida; el octavo mezclaba el cast de Absolute Number con object(). Cada sospechoso
+    tiene ahora su propia prueba.
+    """
+    nombres = [p.nombre for p in selftest.PRUEBAS]
+
+    assert "Absolute Number con cast explicito" in nombres
+    assert "Absolute Number sin cast" in nombres
+    assert "object(absno, m) para saltar al cursor" in nombres
+    assert "object(m, absno) con los argumentos al reves" in nombres
+    assert "length con variable intermedia" in nombres
+    assert "length concatenado del tiron" in nombres
 
 
 def test_cada_prueba_marca_su_respuesta_con_el_testigo():

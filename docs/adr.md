@@ -260,18 +260,28 @@ sin escapar en el script, asi que se valida que sea alfanumerico antes de genera
 
 ## ADR-016 — Toda conversion de numero a texto pasa por un unico sitio
 
-**Decision.** El DXL generado convierte numeros a texto solo a traves de la funcion
-`aTexto(int)`, que empieza por una cadena vacia (`return "" v`).
+**Decision.** El DXL generado convierte numeros a texto solo a traves de `aTexto(int)`, que
+pone el **numero delante** (`return v ""`), y la longitud de un campo se guarda en una
+variable antes de convertirla.
 
 **Motivacion.** La tercera ejecucion contra DOORS real fallo con
-`<Line:4> incorrect arguments for (=)`: la linea era `string n = length(s) ""`. La
-concatenacion de DXL exige que el **primer** operando sea una cadena; con un numero delante
-no compila. El idioma inverso (`o."Atributo" ""`, coercion del valor de un atributo) si
-funciona, lo que hace facil confundirlos.
+`<Line:4> incorrect arguments for (=)` en `string n = length(s) ""`. La primera conclusion
+fue que DXL exige la cadena delante, y se cambio a `"" v`. **Era incorrecta**: el
+autodiagnostico probo las dos formas contra la instalacion real y el resultado fue el
+contrario — `42 ""` funciona y `"" 42` no.
 
-**Consecuencias.** Hay un solo punto que corregir si la instalacion de DOORS resulta
-comportarse de otro modo, y un test que falla si alguien vuelve a escribir una conversion
-invertida.
+La causa real del fallo original no era la direccion sino el analisis sintactico:
+`length(s) ""` se interpreta como `length(s "")`, porque la concatenacion se mete dentro de
+los parentesis de la llamada. La expresion devuelve entonces un entero y la asignacion a una
+cadena falla. Con una variable intermedia no hay ambiguedad.
+
+**Consecuencias.** Hay un solo punto que corregir si otra instalacion se comporta de otro
+modo, y dos tests: uno fija la direccion confirmada y otro impide volver a concatenar la
+llamada a `length` del tiron.
+
+**Leccion.** Un unico sintoma admitia dos explicaciones y se eligio la equivocada sin poder
+comprobarla. Es exactamente el caso que ADR-017 existe para evitar: probar las dos
+alternativas cuesta una linea y elimina la conjetura.
 
 ---
 

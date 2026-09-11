@@ -12,7 +12,7 @@ Alcance cubierto: hitos H0 a H7. Queda planificado H8 (Graph-RAG).
 
 | ID | Modulo | Verificacion | Estado |
 |---|---|---|---|
-| RF-001 | `sources/doors/client.py` | `test_doors_client.py` (COM simulado). Sesion y apertura de modulo **validadas contra DOORS real** el 11/09/2026 | Manual |
+| RF-001 | `sources/doors/client.py` | `test_doors_client.py` (COM simulado). Sesion, apertura de modulo y 10 primitivas DXL **validadas contra DOORS real** el 11/09/2026 con `doors-selftest` | Manual |
 | RF-002 | `sources/doors/client.py::_crear_sesion` | Revisado: usa `Dispatch`, no `GetActiveObject` | Manual |
 | RF-003 | `sources/doors/client.py::start_session` | `test_doors_client.py::test_consultar_sin_sesion_dice_que_hacer` | Manual |
 | RF-004 | `sources/doors/dxl.py::_abrir_modulo` | `test_dxl_generation.py::test_los_modulos_se_abren_siempre_en_lectura` | Implementado |
@@ -36,7 +36,7 @@ Alcance cubierto: hitos H0 a H7. Queda planificado H8 (Graph-RAG).
 |---|---|---|---|
 | RF-020 | `dxl.py::script_fetch_page`, tool `list_requirements` | `test_mcp_tools.py::test_listar_requisitos_devuelve_cursor_para_continuar` | Implementado |
 | RF-021 | `client.py::get_requirement`, tool `get_requirement` | `test_mcp_tools.py::test_un_requisito_incluye_los_campos_minimos` | Implementado |
-| RF-022 | `dxl.py::_filtros_de_objeto`, `sources/fake.py` | `test_display_set.py` | Implementado |
+| RF-022 | `dxl.py::_filtros_de_objeto`, `sources/fake.py` | `test_display_set.py`. `isVisible(o)` **confirmado contra DOORS real** | Implementado |
 | RF-023 | `dxl.py::_filtros_de_objeto` | `test_dxl_generation.py`, `test_fake_source.py` | Implementado |
 | RF-024 | `dxl.py::_filtros_de_objeto` | `test_fake_source.py::test_las_filas_internas_de_tabla_se_excluyen_por_defecto` | Implementado |
 | RF-025 | `models.py::RequirementRecord.to_dict` | `test_mcp_tools.py::test_un_requisito_incluye_los_campos_minimos` | Implementado |

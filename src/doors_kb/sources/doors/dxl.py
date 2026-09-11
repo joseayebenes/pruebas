@@ -81,16 +81,20 @@ def build_preamble(run_limit_cycles: int = 0) -> str:
 # contener cualquier cosa -comillas, backslashes, saltos de linea- sin tratamiento especial,
 # porque el lector de Python no busca delimitadores, cuenta caracteres.
 _HELPERS = """
-// La concatenacion de DXL exige que el primer operando sea una cadena: escribir
-// `length(s) ""` produce "incorrect arguments for (=)". Por eso toda conversion de numero a
-// texto empieza por una cadena vacia, y por eso pasa por un unico sitio (ADR-016).
+// Conversion de numero a texto. El orden es `v ""`, con el numero delante: confirmado
+// contra DOORS real con doors-selftest, que probo las dos formas y descarto la inversa.
 string aTexto(int v) {
-    return "" v
+    return v ""
 }
 
 string ns(string s) {
-    string n = aTexto(length(s))
-    return n ":" s
+    // La longitud se guarda en una variable antes de convertirla. Escrito del tiron,
+    // `length(s) ""` se interpreta como `length(s "")`: la concatenacion se mete dentro de
+    // los parentesis de la llamada, la expresion devuelve un entero y la asignacion falla
+    // con "incorrect arguments for (=)" (ADR-016).
+    int n = length(s)
+    string cabecera = aTexto(n)
+    return cabecera ":" s
 }
 
 string nsInt(int v) {
