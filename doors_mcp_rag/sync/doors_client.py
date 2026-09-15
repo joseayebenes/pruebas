@@ -229,6 +229,41 @@ def _dxl_bool(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _escape_unescaped_json_control_chars(raw: str) -> str:
+    """Escape raw U+0000..U+001F characters that occur inside JSON strings.
+
+    This is a defensive fallback for legacy/unexpected DOORS values. The DXL
+    producer should already escape these characters, but sanitising once before
+    giving up avoids losing a complete synchronisation because of one historic
+    control character stored in an attribute.
+    """
+    result: list[str] = []
+    in_string = False
+    escaped = False
+
+    for char in raw:
+        if in_string:
+            if escaped:
+                result.append(char)
+                escaped = False
+            elif char == "\\":
+                result.append(char)
+                escaped = True
+            elif char == '"':
+                result.append(char)
+                in_string = False
+            elif ord(char) < 0x20:
+                result.append(f"\\u{ord(char):04x}")
+            else:
+                result.append(char)
+        else:
+            result.append(char)
+            if char == '"':
+                in_string = True
+
+    return "".join(result)
+
+
 def _dxl_preamble() -> str:
     """Configura el watchdog interno de DXL para nuestros scripts generados."""
     if DXL_RUN_LIMIT_CYCLES < 0:
@@ -240,15 +275,21 @@ def _dxl_helpers() -> str:
     return r'''
 string jsonEscape(string sourceText) {
     Buffer escaped = create
+    string hexDigits = "0123456789ABCDEF"
     int i = 0
+    int code = 0
     char ch
     for (i = 0; i < length(sourceText); i++) {
         ch = sourceText[i]
+        code = intOf(ch)
         if (ch == '"') escaped += "\\\""
         else if (ch == '\\') escaped += "\\\\"
-        else if (ch == '\n') escaped += "\\n"
-        else if (ch == '\r') escaped += "\\r"
-        else if (ch == '\t') escaped += "\\t"
+        else if (code >= 0 && code < 32) {
+            escaped += "\\u00"
+            escaped += hexDigits[code / 16]
+            escaped += hexDigits[code % 16]
+        }
+        else if (code == 127) escaped += "\\u007F"
         else escaped += ch
     }
     string result = stringOf(escaped)
@@ -366,7 +407,21 @@ class DoorsClient:
         try:
             result = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise DoorsError(f"DOORS devolvió JSON inválido: {raw[:500]}") from exc
+            if "Invalid control character" in exc.msg:
+                sanitised = _escape_unescaped_json_control_chars(raw)
+                try:
+                    result = json.loads(sanitised)
+                except json.JSONDecodeError:
+                    preview = repr(raw[max(0, exc.pos - 80):exc.pos + 80])
+                    raise DoorsError(
+                        "DOORS devolvió JSON con caracteres de control no válidos "
+                        f"cerca de la posición {exc.pos}: {preview}"
+                    ) from exc
+            else:
+                preview = repr(raw[max(0, exc.pos - 80):exc.pos + 80])
+                raise DoorsError(
+                    f"DOORS devolvió JSON inválido en la posición {exc.pos}: {preview}"
+                ) from exc
         if not isinstance(result, dict):
             raise DoorsError("Respuesta inesperada de DOORS.")
         if not result.get("ok", False):
