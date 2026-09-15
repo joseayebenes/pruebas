@@ -50,6 +50,40 @@ python examples/demo_sync_fake.py        # ciclo de sincronizacion
 python examples/demo_busqueda_hibrida.py # los tres modos de busqueda
 ```
 
+## Script autonomo de descarga (dos archivos)
+
+Para descargar requisitos sin montar el paquete completo hay un script independiente en
+`scripts/`, formado por **solo dos archivos** que se pueden copiar sueltos a la maquina con
+DOORS. No importan `doors_kb` ni necesitan instalacion: solo `pywin32`.
+
+| Archivo | Responsabilidad |
+|---|---|
+| [`scripts/modelo_sqlite.py`](scripts/modelo_sqlite.py) | Esquema SQLite, hash de contenido, altas/bajas y el historial de descargas |
+| [`scripts/descargar_requisitos.py`](scripts/descargar_requisitos.py) | Sesion Automation, generacion de DXL, paginacion por cursor y volcado a la base |
+
+```powershell
+# un modulo concreto
+python scripts\descargar_requisitos.py --modulo "/Proyecto/Requisitos/SRS"
+
+# todos los modulos formales de un proyecto, recursivamente
+python scripts\descargar_requisitos.py --carpeta "/Proyecto" --base doors.sqlite3
+
+# que modulos encontraria, sin descargar nada
+python scripts\descargar_requisitos.py --carpeta "/Proyecto" --solo-listar
+
+# resumen de lo descargado
+python scripts\modelo_sqlite.py doors.sqlite3
+```
+
+Por defecto descarga **todos** los atributos de objeto de cada modulo menos los de sistema
+(`Object Heading` y `Object Text` se conservan siempre); con `--atributos "Object Text,Estado"`
+se restringe a una lista, que se valida contra el esquema real del modulo antes de escribir
+nada. Las descargas siguientes son incrementales: solo se reescribe lo que cambio de hash.
+
+Comparte las reglas de seguridad del sincronizador del paquete: solo lectura, una pagina por
+transaccion, y los ausentes se marcan como borrados **unicamente** si se llego al final del
+modulo, de modo que una descarga interrumpida nunca borra requisitos vivos.
+
 ## Sincronizacion contra DOORS real
 
 Antes de la primera sincronizacion conviene comprobar que DXL se comporta como el proyecto
