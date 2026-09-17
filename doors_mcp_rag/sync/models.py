@@ -14,6 +14,7 @@ class RequirementRecord:
     outline_number: str
     heading: str
     text: str
+    unique_identifier: str | None = None
     attributes: Mapping[str, str] = field(default_factory=dict)
     is_deleted: bool = False
     source_last_modified: str | None = None
