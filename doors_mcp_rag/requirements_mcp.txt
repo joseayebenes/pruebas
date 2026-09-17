@@ -1,0 +1,5 @@
+mcp[cli]>=2,<3
+python-dotenv>=1,<2
+
+# `daisei` es una libreria interna y debe estar disponible en el entorno Python.
+# El MCP no necesita pywin32: no accede a DOORS.
