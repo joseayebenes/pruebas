@@ -14,10 +14,16 @@ from sync_service import sync_module
 
 
 MODULE = "/Demo/System Requirements"
-ATTRIBUTES = ["Object Heading", "Object Text", "Status"]
+ATTRIBUTES = ["Object Heading", "Object Text", "Status", "REM_UniqueIdentifier"]
 
 
-def item(number: int, heading: str, text: str, status: str) -> dict:
+def item(
+    number: int,
+    heading: str,
+    text: str,
+    status: str,
+    unique_identifier: str | None = None,
+) -> dict:
     return {
         "absolute_number": number,
         "identifier": f"SYS-REQ-{number}",
@@ -27,6 +33,7 @@ def item(number: int, heading: str, text: str, status: str) -> dict:
             "Object Heading": heading,
             "Object Text": text,
             "Status": status,
+            "REM_UniqueIdentifier": unique_identifier or "",
         },
     }
 
@@ -85,8 +92,8 @@ def main() -> None:
         first = sync_module(
             FakeDoorsSource(
                 [
-                    item(1, "Ethernet", "The system shall provide Ethernet.", "Approved"),
-                    item(2, "Timeout", "A timeout shall be detected.", "Draft"),
+                    item(1, "Ethernet", "The system shall provide Ethernet.", "Approved", "REQ_ETHERNET"),
+                    item(2, "Timeout", "A timeout shall be detected.", "Draft", "REQ_TIMEOUT"),
                     item(3, "Recovery", "The system shall recover the link.", "Approved"),
                 ]
             ),
@@ -101,12 +108,20 @@ def main() -> None:
         assert first.unchanged == 0
         assert first.marked_deleted == 0
 
+        req1 = repository.get_requirement(MODULE, 1)
+        assert req1 is not None
+        assert req1["unique_identifier"] == "REQ_ETHERNET"
+
+        req3 = repository.get_requirement(MODULE, 3)
+        assert req3 is not None
+        assert req3["unique_identifier"] is None
+
         second = sync_module(
             FakeDoorsSource(
                 [
-                    item(1, "Ethernet", "The system shall provide Ethernet.", "Approved"),
-                    item(2, "Timeout", "A timeout shall be detected in 5 seconds.", "Approved"),
-                    item(4, "Degraded mode", "The unit shall enter degraded mode.", "Draft"),
+                    item(1, "Ethernet", "The system shall provide Ethernet.", "Approved", "REQ_ETHERNET"),
+                    item(2, "Timeout", "A timeout shall be detected in 5 seconds.", "Approved", "REQ_TIMEOUT"),
+                    item(4, "Degraded mode", "The unit shall enter degraded mode.", "Draft", "REQ_DEGRADED"),
                 ]
             ),
             repository,
@@ -127,10 +142,10 @@ def main() -> None:
         third = sync_module(
             FakeDoorsSource(
                 [
-                    item(1, "Ethernet", "The system shall provide Ethernet.", "Approved"),
-                    item(2, "Timeout", "A timeout shall be detected in 5 seconds.", "Approved"),
+                    item(1, "Ethernet", "The system shall provide Ethernet.", "Approved", "REQ_ETHERNET"),
+                    item(2, "Timeout", "A timeout shall be detected in 5 seconds.", "Approved", "REQ_TIMEOUT"),
                     item(3, "Recovery", "The system shall recover the link.", "Approved"),
-                    item(4, "Degraded mode", "The unit shall enter degraded mode.", "Draft"),
+                    item(4, "Degraded mode", "The unit shall enter degraded mode.", "Draft", "REQ_DEGRADED"),
                 ]
             ),
             repository,
@@ -143,6 +158,10 @@ def main() -> None:
         assert restored is not None
         assert restored["is_deleted"] is False
         assert repository.count_requirements(MODULE) == 4
+
+        matches = repository.find_by_unique_identifier("REQ_TIMEOUT", module_path=MODULE)
+        assert len(matches) == 1
+        assert matches[0]["absolute_number"] == 2
 
         print("PRUEBA OK")
         print("Primera sync:", first.as_dict())
