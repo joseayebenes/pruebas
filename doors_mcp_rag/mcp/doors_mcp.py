@@ -27,15 +27,63 @@ from daisei_embedding import (  # noqa: E402
 )
 
 
+SERVER_INSTRUCTIONS = """
+Este MCP es la fuente de consulta para requisitos de ingeniería almacenados en la
+base SQLite local indicada con --db.
+
+CUANDO USAR ESTE MCP
+- Úsalo siempre que la tarea dependa de conocer requisitos, especificaciones,
+  atributos, identificadores o relaciones de trazabilidad que puedan estar en
+  esta base de datos.
+- Úsalo antes de responder preguntas como: "qué requisito habla de...",
+  "busca el requisito...", "qué requisitos están relacionados con...",
+  "cuál es el texto/atributo de...", "hay algún requisito sobre...",
+  "qué requisito depende de..." o tareas de análisis de código/diseño que
+  necesiten comprobar requisitos del proyecto.
+- Si una respuesta sobre el proyecto requiere hechos procedentes de requisitos,
+  consulta este MCP en lugar de inventar, asumir o basarte solo en conocimiento
+  general.
+
+CUANDO NO USARLO
+- No lo uses para conocimiento general que no dependa de los requisitos locales.
+- No esperes información en tiempo real de IBM DOORS: este servidor nunca abre
+  DOORS, nunca ejecuta DXL y nunca sincroniza datos.
+- Si algo no está en SQLite, indícalo como no encontrado; no supongas que existe
+  en DOORS.
+
+COMO ELEGIR LA TOOL
+1. Si conoces REM_UniqueIdentifier (por ejemplo REQ_MENSAJES), usa
+   find_requirement_by_unique_identifier.
+2. Si conoces identifier(obj), usa find_requirement_by_identifier.
+3. Si conoces el id interno de SQLite, usa get_requirement_by_id.
+4. Si conoces Absolute Number, usa get_requirement_by_absolute_number y, si es
+   posible, especifica module_path.
+5. Si buscas palabras o una frase concreta, usa search_requirements_text.
+6. Si la consulta es conceptual, semántica o no sabes la redacción exacta del
+   requisito, usa search_requirements_by_embedding. Daisei se usa únicamente
+   para crear el vector de la consulta; los resultados salen solo de SQLite.
+7. Si ya dispones de un vector compatible, usa search_requirements_by_vector
+   para una búsqueda completamente local sin llamar a Daisei.
+8. Si preguntas por dependencias, relaciones, impactos, trazabilidad, requisitos
+   origen/destino o "qué está relacionado con X", usa una tool get_relations_*.
+9. Usa list_modules cuando necesites saber qué módulos están disponibles y
+   database_status cuando necesites comprobar cobertura, embeddings o enlaces.
+
+REGLAS DE RESPUESTA
+- Trata SQLite como única fuente de verdad disponible para este MCP.
+- Prioriza búsquedas exactas cuando el usuario proporciona un identificador.
+- Usa búsqueda semántica cuando la intención esté expresada en lenguaje natural
+  y no haya identificador exacto.
+- No presentes una coincidencia semántica como identidad exacta: conserva su
+  score de similitud y distingue entre coincidencia exacta y aproximada.
+- Para preguntas de impacto o trazabilidad, consulta las relaciones además del
+  requisito principal cuando sea relevante.
+""".strip()
+
+
 mcp = MCPServer(
     "Requirements Knowledge Base",
-    instructions=(
-        "Servidor MCP estrictamente de solo lectura sobre una base SQLite local. "
-        "Nunca consulta IBM DOORS ni sincroniza informacion en tiempo real. "
-        "Todos los requisitos, atributos y enlaces proceden exclusivamente del "
-        "fichero indicado con --db. Daisei solo se usa para convertir una consulta "
-        "semantica en un vector; no se usa chat ni generacion de texto."
-    ),
+    instructions=SERVER_INSTRUCTIONS,
 )
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -112,8 +160,10 @@ def _relations_for_matches(
 @mcp.tool(
     title="Estado de la base local",
     description=(
-        "Devuelve el estado de la base SQLite local: numero de requisitos, modulos, "
-        "enlaces de trazabilidad y modelos de embedding almacenados. No consulta DOORS."
+        "Usa esta tool cuando necesites comprobar qué información puede consultar el MCP: "
+        "número de requisitos, módulos, enlaces y modelos de embedding disponibles. "
+        "Es útil para diagnosticar una búsqueda vacía o verificar cobertura antes de una "
+        "consulta semántica. No la uses como búsqueda de requisitos concretos."
     ),
     annotations=READ_ONLY,
 )
@@ -132,8 +182,9 @@ def database_status() -> dict[str, Any]:
 @mcp.tool(
     title="Listar modulos locales",
     description=(
-        "Lista los modulos DOORS que ya estan almacenados en SQLite e indica cuantos "
-        "requisitos activos y embeddings contiene cada uno."
+        "Usa esta tool cuando necesites saber qué módulos de requisitos están disponibles "
+        "en la base local, especialmente antes de aplicar un filtro module_path o cuando un "
+        "Absolute Number pueda ser ambiguo entre módulos."
     ),
     annotations=READ_ONLY,
 )
@@ -148,8 +199,9 @@ def list_modules() -> dict[str, Any]:
 @mcp.tool(
     title="Buscar por UniqueIdentifier",
     description=(
-        "Busca requisitos por coincidencia exacta del REM_UniqueIdentifier almacenado "
-        "en la columna unique_identifier, por ejemplo REQ_MENSAJES."
+        "Usa esta tool como primera opción cuando el usuario o el contexto proporciona un "
+        "REM_UniqueIdentifier conocido, por ejemplo REQ_MENSAJES. Realiza una coincidencia "
+        "exacta; es preferible a la búsqueda textual o semántica cuando ya conoces este ID."
     ),
     annotations=READ_ONLY,
 )
@@ -176,8 +228,9 @@ def find_requirement_by_unique_identifier(
 @mcp.tool(
     title="Buscar por identifier",
     description=(
-        "Busca requisitos por coincidencia exacta del identifier de objeto de DOORS "
-        "que fue guardado previamente en SQLite."
+        "Usa esta tool cuando conozcas el identifier(obj) de DOORS guardado en SQLite. "
+        "Es una búsqueda exacta y debe preferirse a texto/embedding si el identifier está "
+        "disponible."
     ),
     annotations=READ_ONLY,
 )
@@ -201,8 +254,9 @@ def find_requirement_by_identifier(
 @mcp.tool(
     title="Obtener requisito por ID SQLite",
     description=(
-        "Obtiene un requisito concreto usando la clave primaria id de la tabla "
-        "requirements de SQLite."
+        "Usa esta tool cuando ya tengas la clave primaria id de la tabla requirements, por "
+        "ejemplo porque apareció en el resultado de otra tool. Recupera directamente ese "
+        "registro; no la confundas con identifier, UniqueIdentifier ni Absolute Number."
     ),
     annotations=READ_ONLY,
 )
@@ -223,8 +277,9 @@ def get_requirement_by_id(
 @mcp.tool(
     title="Buscar por Absolute Number",
     description=(
-        "Busca requisitos por el Absolute Number original de DOORS almacenado en SQLite. "
-        "Puede limitarse a un module_path para evitar ambiguedades entre modulos."
+        "Usa esta tool cuando conozcas el Absolute Number original de DOORS. Si la base "
+        "contiene varios módulos, proporciona module_path siempre que sea posible porque "
+        "el mismo número puede existir en más de un módulo."
     ),
     annotations=READ_ONLY,
 )
@@ -256,8 +311,10 @@ def get_requirement_by_absolute_number(
 @mcp.tool(
     title="Buscar texto en requisitos locales",
     description=(
-        "Realiza una busqueda textual local sobre identifier, unique_identifier, heading "
-        "y text de los requisitos activos almacenados en SQLite."
+        "Usa esta tool cuando busques una palabra, código, expresión o fragmento que esperas "
+        "que aparezca literalmente en identifier, UniqueIdentifier, heading o text. Para "
+        "preguntas conceptuales donde no conoces la redacción exacta, prefiere la búsqueda "
+        "por embedding."
     ),
     annotations=READ_ONLY,
 )
@@ -281,9 +338,11 @@ def search_requirements_text(
 @mcp.tool(
     title="Buscar requisitos por embedding",
     description=(
-        "Convierte la consulta en un embedding mediante Daisei y busca por similitud "
-        "coseno exclusivamente contra los vectores ya almacenados en SQLite. Daisei "
-        "no obtiene requisitos ni genera una respuesta de chat."
+        "Usa esta tool cuando el usuario describa una necesidad, comportamiento o concepto "
+        "en lenguaje natural y no conozcas el texto o identificador exacto del requisito. "
+        "También es apropiada para encontrar requisitos semánticamente similares. Daisei "
+        "solo calcula el embedding de la consulta; toda la información devuelta procede de "
+        "SQLite. No la uses si ya tienes un identificador exacto."
     ),
     annotations=READ_ONLY,
 )
@@ -331,8 +390,9 @@ def search_requirements_by_embedding(
 @mcp.tool(
     title="Buscar mediante un vector ya calculado",
     description=(
-        "Busca requisitos por similitud coseno usando un vector proporcionado por el "
-        "cliente. La operacion es completamente local y no realiza llamadas a Daisei."
+        "Usa esta tool solo cuando el cliente ya tenga un vector de embedding calculado y "
+        "conozca el modelo compatible con los vectores de la base. Es la variante de búsqueda "
+        "semántica completamente local y no realiza ninguna llamada a Daisei."
     ),
     annotations=READ_ONLY,
 )
@@ -372,8 +432,9 @@ def search_requirements_by_vector(
 @mcp.tool(
     title="Relaciones por UniqueIdentifier",
     description=(
-        "Obtiene los enlaces de trazabilidad almacenados en SQLite para los requisitos "
-        "que coincidan con un UniqueIdentifier. Permite relaciones entrantes, salientes o ambas."
+        "Usa esta tool cuando la pregunta trate de trazabilidad, dependencias, impacto, origen "
+        "o destino de un requisito y conozcas su REM_UniqueIdentifier. Devuelve relaciones "
+        "entrantes, salientes o ambas desde el grafo guardado en SQLite."
     ),
     annotations=READ_ONLY,
 )
@@ -398,8 +459,9 @@ def get_relations_by_unique_identifier(
 @mcp.tool(
     title="Relaciones por identifier",
     description=(
-        "Obtiene los enlaces de trazabilidad almacenados en SQLite para los requisitos "
-        "que coincidan con un identifier de DOORS guardado previamente."
+        "Usa esta tool cuando necesites trazabilidad, dependencias o análisis de impacto y "
+        "conozcas el identifier(obj) del requisito. Consulta únicamente los enlaces ya "
+        "almacenados en SQLite."
     ),
     annotations=READ_ONLY,
 )
@@ -424,8 +486,8 @@ def get_relations_by_identifier(
 @mcp.tool(
     title="Relaciones por ID SQLite",
     description=(
-        "Obtiene los enlaces de trazabilidad de un requisito identificado por la clave "
-        "primaria id de SQLite."
+        "Usa esta tool cuando necesites navegar la trazabilidad de un requisito que ya fue "
+        "devuelto por otra consulta y dispongas de su id interno de SQLite."
     ),
     annotations=READ_ONLY,
 )
@@ -447,8 +509,9 @@ def get_relations_by_id(
 @mcp.tool(
     title="Relaciones por Absolute Number",
     description=(
-        "Obtiene los enlaces de trazabilidad almacenados para uno o varios requisitos "
-        "con un Absolute Number concreto. Puede filtrarse por module_path."
+        "Usa esta tool cuando la pregunta sea de trazabilidad o impacto y conozcas el Absolute "
+        "Number. Si existen varios módulos, proporciona module_path para evitar resolver el "
+        "número contra el requisito equivocado."
     ),
     annotations=READ_ONLY,
 )
