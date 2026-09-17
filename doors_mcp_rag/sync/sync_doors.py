@@ -12,6 +12,7 @@ from embeddings import (
 )
 from repository import RequirementsRepository
 from sync_service import sync_module
+from traceability import DoorsTraceabilitySource, TraceabilityRepository, sync_module_traceability
 
 
 DEFAULT_DB = Path(__file__).with_name("doors_requirements.db")
@@ -60,6 +61,25 @@ def parse_args() -> argparse.Namespace:
         "--no-login-pause",
         action="store_true",
         help="No esperar ENTER después de crear DOORS.Application.",
+    )
+    parser.add_argument(
+        "--sync-links",
+        action="store_true",
+        help="Tras descargar requisitos, extrae y guarda trazabilidad DOORS.",
+    )
+    parser.add_argument(
+        "--links-direction",
+        choices=("incoming", "outgoing", "both"),
+        default="both",
+        help="Dirección de relaciones a extraer con --sync-links.",
+    )
+    parser.add_argument(
+        "--allow-incomplete-incoming",
+        action="store_true",
+        help=(
+            "Con --sync-links permite guardar enlaces aunque algún módulo origen "
+            "no pueda cargarse. Por defecto se conserva la copia anterior."
+        ),
     )
     parser.add_argument(
         "--calculate-embeddings",
@@ -136,12 +156,31 @@ def main() -> None:
         print(f"Eliminados:    {stats.marked_deleted}")
         print(f"Base SQLite:   {Path(args.db).resolve()}")
 
+        if args.sync_links:
+            print()
+            print(f"4. Sincronizando trazabilidad ({args.links_direction})...")
+            trace_stats = sync_module_traceability(
+                DoorsTraceabilitySource(client),
+                repository,
+                module_path,
+                direction=args.links_direction,
+                load_incoming_sources=args.links_direction in ("incoming", "both"),
+                strict_incoming=not args.allow_incomplete_incoming,
+            )
+            trace_repository = TraceabilityRepository(repository)
+            print("Trazabilidad:", trace_stats.as_dict())
+            print(
+                "Links del módulo en DB:",
+                trace_repository.count_links(module_path=module_path),
+            )
+
     finally:
         client.close()
 
     if args.calculate_embeddings:
         print()
-        print("4. Calculando embeddings pendientes...")
+        step = "5" if args.sync_links else "4"
+        print(f"{step}. Calculando embeddings pendientes...")
         config = (
             EmbeddingConfig.from_env()
             .with_batch_size(args.embedding_batch_size)
