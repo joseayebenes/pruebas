@@ -7,29 +7,24 @@ Prototipo para exponer IBM DOORS Classic a agentes de IA mediante MCP y construi
 Implementado en esta rama:
 
 - acceso a IBM DOORS Classic mediante `DOORS.Application` + DXL;
-- servidor MCP modular de solo lectura;
+- servidor MCP modular;
 - validación estricta de atributos;
 - timeouts del worker COM;
-- persistencia local SQLite;
+- persistencia local SQLite y migraciones de esquema;
 - sincronización DOORS → SQLite con detección `inserted / updated / unchanged`;
+- `REM_UniqueIdentifier` proyectado a `requirements.unique_identifier` (`NULL` si está vacío);
+- columna `embedding` en SQLite, almacenada como vector `float32` en BLOB;
+- metadatos de embedding: modelo, dimensión, hash del contenido y fecha;
+- invalidación automática del embedding cuando cambia el requisito;
+- generación incremental de embeddings mediante un endpoint OpenAI-compatible configurable;
+- búsqueda semántica local por similitud coseno;
+- búsquedas MCP por UniqueIdentifier, identifier de DOORS, Absolute Number e ID SQLite;
 - detección segura de requisitos desaparecidos;
 - reactivación de requisitos que reaparecen;
 - paginación por cursor para evitar reescaneos crecientes;
 - watchdog DXL configurable mediante `pragma runLim`;
-- pruebas de sincronización con una fuente DOORS falsa;
-- prueba de regresión del preámbulo DXL;
-- especificación consolidada de requisitos y roadmap.
-
-El prototipo MCP avanzado desarrollado anteriormente incluye además búsqueda directa y consulta de enlaces. La siguiente refactorización deberá integrar esas capacidades en el MCP modular de esta rama sin duplicar la capa COM/DXL.
-
-## Próximas fases
-
-1. Integrar búsqueda directa y trazabilidad en el MCP modular.
-2. SQLite FTS5.
-3. Embeddings incrementales.
-4. Búsqueda híbrida lexical + semántica.
-5. Tools MCP sobre la base local.
-6. Graph-RAG usando los enlaces de DOORS.
+- saneamiento de caracteres de control en JSON procedente de DOORS;
+- pruebas locales de sincronización y embeddings.
 
 ## Estructura
 
@@ -44,12 +39,17 @@ doors_mcp_rag/
 │   ├── repository.py
 │   ├── doors_client.py
 │   ├── sync_service.py
+│   ├── embeddings.py
+│   ├── embed_requirements.py
 │   └── sync_doors.py
 ├── tests/
 │   ├── test_sync_fake.py
-│   └── test_dxl_generation.py
+│   ├── test_repository_embeddings.py
+│   ├── test_dxl_generation.py
+│   └── test_json_control_chars.py
 └── docs/
     ├── SPECIFICATION.md
+    ├── EMBEDDINGS.md
     ├── README_STEP1.md
     ├── README_TIMEOUT_FIX.md
     └── README_DXL_PARSE_FIX.md
@@ -67,24 +67,31 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-## Probar la lógica local
+## Modelo SQLite
 
-Desde `doors_mcp_rag`:
+La identidad estable del objeto DOORS sigue siendo:
 
-```powershell
-python .\tests\test_sync_fake.py
+```text
+(module_path, absolute_number)
 ```
 
-La prueba no necesita DOORS. Valida altas, modificaciones, desapariciones y reapariciones de requisitos.
+Además se almacenan:
 
-La prueba del preámbulo DXL necesita `pywin32` y debe ejecutarse en Windows:
-
-```powershell
-$env:PYTHONPATH = ".\sync"
-python .\tests\test_dxl_generation.py
+```text
+identifier            identifier(obj) de DOORS
+unique_identifier     REM_UniqueIdentifier; puede ser NULL
+embedding             BLOB float32; puede ser NULL
+embedding_model       modelo que generó el vector
+embedding_dimensions  número de componentes
+embedding_content_hash
+embedding_updated_at
 ```
+
+`unique_identifier` tiene índice para búsquedas rápidas, pero no se fuerza `UNIQUE` a nivel SQL porque distintos módulos podrían reutilizar el mismo valor.
 
 ## Sincronización real
+
+`REM_UniqueIdentifier` se añade automáticamente a los atributos descargados, por lo que no hay que indicarlo en `--attributes`.
 
 ```powershell
 $env:DOORS_DXL_RUN_LIMIT_CYCLES = "0"
@@ -96,31 +103,64 @@ python .\sync\sync_doors.py `
   --max-attribute-chars 20000
 ```
 
-El flujo es:
+DOORS continúa siendo la fuente de verdad. SQLite actúa como capa local optimizada para consultas de IA.
 
-```text
-DOORS Classic
-     │
-     │ COM + DXL
-     ▼
-doors_client.py
-     │
-     │ páginas por cursor
-     ▼
-sync_service.py
-     │
-     ▼
-repository.py
-     │
-     ▼
-doors_requirements.db
+## Configurar embeddings
+
+El código usa el SDK de OpenAI, pero el endpoint y el modelo no están fijados. Configura tu servidor OpenAI-compatible mediante variables de entorno:
+
+```powershell
+$env:DOORS_EMBEDDING_BASE_URL = "http://TU_SERVIDOR:PUERTO/v1"
+$env:DOORS_EMBEDDING_MODEL = "TU_MODELO_DE_EMBEDDINGS"
+$env:DOORS_EMBEDDING_API_KEY = "opcional-si-tu-servidor-la-necesita"
+$env:DOORS_EMBEDDING_BATCH_SIZE = "32"
+$env:DOORS_EMBEDDING_TIMEOUT_SECONDS = "60"
+$env:DOORS_EMBEDDING_MAX_INPUT_CHARS = "30000"
 ```
 
-DOORS continúa siendo la fuente de verdad. SQLite actúa como capa local optimizada para consultas de IA.
+La clave puede omitirse si el servidor local no usa autenticación.
+
+### Opción A: sincronizar y después calcular embeddings
+
+```powershell
+python .\sync\sync_doors.py `
+  --module "/Proyecto/Requisitos/Requisitos del sistema" `
+  --calculate-embeddings
+```
+
+### Opción B: calcularlos posteriormente sin abrir DOORS
+
+```powershell
+python .\sync\embed_requirements.py `
+  --db .\sync\doors_requirements.db `
+  --module "/Proyecto/Requisitos/Requisitos del sistema"
+```
+
+Por defecto solo se calculan vectores ausentes, de otro modelo o cuyo requisito haya cambiado. Para regenerarlos todos:
+
+```powershell
+python .\sync\embed_requirements.py --force
+```
+
+## Texto enviado al modelo de embeddings
+
+Cada vector representa una composición determinista de:
+
+```text
+Module
+UniqueIdentifier
+DOORS Identifier
+Outline
+Heading
+Text
+atributos adicionales de DOORS
+```
+
+No se envía el BLOB almacenado ni metadatos técnicos de sincronización.
 
 ## MCP en VS Code
 
-Configura `.vscode/mcp.json` usando el Python del entorno virtual:
+Ejemplo `.vscode/mcp.json`:
 
 ```json
 {
@@ -133,16 +173,22 @@ Configura `.vscode/mcp.json` usando el Python del entorno virtual:
       ],
       "env": {
         "DOORS_MODULE_PATH": "/Proyecto/Requisitos/Requisitos del sistema",
+        "DOORS_SQLITE_PATH": "C:\\ruta\\doors_mcp_rag\\sync\\doors_requirements.db",
         "DOORS_START_TIMEOUT_SECONDS": "30",
         "DOORS_DXL_TIMEOUT_SECONDS": "90",
-        "DOORS_DXL_RUN_LIMIT_CYCLES": "0"
+        "DOORS_DXL_RUN_LIMIT_CYCLES": "0",
+        "DOORS_EMBEDDING_BASE_URL": "http://TU_SERVIDOR:PUERTO/v1",
+        "DOORS_EMBEDDING_MODEL": "TU_MODELO_DE_EMBEDDINGS",
+        "DOORS_EMBEDDING_API_KEY": ""
       }
     }
   }
 }
 ```
 
-Tools disponibles en el MCP modular actual:
+## Tools MCP
+
+Acceso directo a DOORS:
 
 ```text
 doors_configuration
@@ -153,4 +199,36 @@ validate_attributes
 list_requirements
 ```
 
-Consulta `docs/SPECIFICATION.md` para el catálogo completo de requisitos y el roadmap del proyecto.
+Acceso a la copia local SQLite:
+
+```text
+local_database_status
+find_requirement_by_unique_identifier
+find_requirement_by_identifier
+get_local_requirement_by_id
+get_local_requirement_by_absolute_number
+embedding_status
+calculate_embeddings
+search_requirements_by_embedding
+```
+
+Ejemplos conceptuales:
+
+```text
+find_requirement_by_unique_identifier("REQ_MENSAJES")
+get_local_requirement_by_absolute_number(123, module_path="/Proyecto/Requisitos")
+search_requirements_by_embedding("requisitos sobre pérdida de comunicaciones", limit=10)
+```
+
+La búsqueda semántica genera el embedding de la consulta con el mismo modelo configurado y calcula similitud coseno contra los vectores válidos almacenados en SQLite.
+
+## Pruebas
+
+```powershell
+python .\tests\test_sync_fake.py
+python .\tests\test_repository_embeddings.py
+```
+
+Las pruebas anteriores no necesitan un endpoint real de embeddings. La comunicación con el servidor custom queda aislada en `sync/embeddings.py`.
+
+Consulta `docs/SPECIFICATION.md` para el catálogo general de requisitos y `docs/EMBEDDINGS.md` para el diseño de la capa vectorial.
