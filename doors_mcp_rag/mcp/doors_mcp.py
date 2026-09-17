@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import os
+import argparse
+import atexit
 import sys
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -15,342 +16,161 @@ SYNC_DIR = PROJECT_ROOT / "sync"
 if str(SYNC_DIR) not in sys.path:
     sys.path.insert(0, str(SYNC_DIR))
 
-from doors_client import DoorsClient, DoorsError  # noqa: E402
-from embeddings import (  # noqa: E402
-    EmbeddingConfig,
-    OpenAICompatibleEmbeddingProvider,
-    embed_query,
-    generate_embeddings,
+from daisei_embedding import (  # noqa: E402
+    DEFAULT_EMBEDDING_MODEL,
+    DaiseiEmbeddingProvider,
 )
-from repository import RequirementsRepository  # noqa: E402
-from traceability import (  # noqa: E402
-    DoorsTraceabilitySource,
-    TraceabilityRepository,
-    sync_module_traceability,
-)
+from local_repository import LocalRequirementsRepository  # noqa: E402
 
-
-DEFAULT_MODULE_PATH = os.environ.get("DOORS_MODULE_PATH", "").strip()
-DEFAULT_DB_PATH = Path(
-    os.environ.get(
-        "DOORS_SQLITE_PATH",
-        str(SYNC_DIR / "doors_requirements.db"),
-    )
-)
-DEFAULT_ATTRIBUTES = ["Object Heading", "Object Text"]
 
 mcp = MCPServer(
-    "IBM DOORS Classic Requirements",
+    "Requirements Knowledge Base",
     instructions=(
-        "Servidor MCP local para IBM DOORS Classic y su copia SQLite. "
-        "Las tools locales no necesitan una sesión DOORS. La búsqueda semántica "
-        "usa el endpoint OpenAI-compatible configurado en DOORS_EMBEDDING_*. "
-        "La trazabilidad se sincroniza desde los enlaces estándar de DOORS y se "
-        "consulta localmente desde SQLite."
+        "Servidor MCP estrictamente de solo lectura sobre una base SQLite local. "
+        "Nunca consulta IBM DOORS ni sincroniza datos en tiempo real. Todos los "
+        "requisitos, atributos y relaciones proceden exclusivamente de la base "
+        "indicada con --db. Daisei se usa unicamente para calcular el embedding "
+        "de una consulta semantica; no se usa chat ni para obtener requisitos."
     ),
 )
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
-START_SESSION = ToolAnnotations(
-    read_only_hint=False,
-    destructive_hint=False,
-    idempotent_hint=True,
-    open_world_hint=False,
-)
-LOCAL_WRITE = ToolAnnotations(
-    read_only_hint=False,
-    destructive_hint=False,
-    idempotent_hint=True,
-    open_world_hint=True,
-)
 
-_CLIENT: DoorsClient | None = None
-_REPOSITORY: RequirementsRepository | None = None
-_TRACE_REPOSITORY: TraceabilityRepository | None = None
+_REPOSITORY: LocalRequirementsRepository | None = None
+_EMBEDDING_PROVIDER: DaiseiEmbeddingProvider | None = None
 
 
-def _client() -> DoorsClient:
-    global _CLIENT
-    if _CLIENT is None:
-        _CLIENT = DoorsClient()
-    return _CLIENT
-
-
-def _repository() -> RequirementsRepository:
-    global _REPOSITORY
+def _repository() -> LocalRequirementsRepository:
     if _REPOSITORY is None:
-        _REPOSITORY = RequirementsRepository(DEFAULT_DB_PATH)
-        _REPOSITORY.initialise()
+        raise RuntimeError("El MCP no ha sido inicializado con --db.")
     return _REPOSITORY
 
 
-def _trace_repository() -> TraceabilityRepository:
-    global _TRACE_REPOSITORY
-    if _TRACE_REPOSITORY is None:
-        _TRACE_REPOSITORY = TraceabilityRepository(_repository())
-        _TRACE_REPOSITORY.initialise()
-    return _TRACE_REPOSITORY
+def _embedding_provider() -> DaiseiEmbeddingProvider:
+    global _EMBEDDING_PROVIDER
+    if _EMBEDDING_PROVIDER is None:
+        _EMBEDDING_PROVIDER = DaiseiEmbeddingProvider()
+    return _EMBEDDING_PROVIDER
 
 
-def _module_path(value: str | None) -> str:
-    selected = (value or DEFAULT_MODULE_PATH).strip()
-    if not selected:
-        raise DoorsError(
-            "No se ha indicado module_path y DOORS_MODULE_PATH no está definida."
-        )
-    return selected
+def _close_embedding_provider() -> None:
+    global _EMBEDDING_PROVIDER
+    if _EMBEDDING_PROVIDER is not None:
+        _EMBEDDING_PROVIDER.close()
+        _EMBEDDING_PROVIDER = None
 
 
-def _optional_module_path(value: str | None) -> str | None:
-    selected = (value or DEFAULT_MODULE_PATH).strip()
-    return selected or None
-
-
-def _attributes(value: list[str] | None) -> list[str]:
-    result: list[str] = []
-    for item in value or DEFAULT_ATTRIBUTES:
-        name = item.strip()
-        if name and name not in result:
-            result.append(name)
-    if not result:
-        return DEFAULT_ATTRIBUTES.copy()
-    return result
+atexit.register(_close_embedding_provider)
 
 
 def _required_text(value: str, label: str) -> str:
     text = value.strip()
     if not text:
-        raise ValueError(f"{label} no puede estar vacío.")
+        raise ValueError(f"{label} no puede estar vacio.")
     return text
 
 
-def _error(exc: Exception, module_path: str | None = None) -> dict[str, Any]:
+def _optional_module_path(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text or None
+
+
+def _error(exc: Exception) -> dict[str, Any]:
     return {
         "ok": False,
         "error": str(exc),
         "error_type": type(exc).__name__,
-        "module_path": module_path,
     }
 
 
-def _relations_for_requirement(
-    requirement: dict,
+def _relations_for_matches(
+    requirements: list[dict],
     *,
     direction: Literal["incoming", "outgoing", "both"],
     limit: int,
-) -> dict[str, Any]:
-    relations = _trace_repository().get_relations(
-        str(requirement["module_path"]),
-        int(requirement["absolute_number"]),
-        direction=direction,
-        limit=limit,
-    )
-    return {
-        "requirement": requirement,
-        "direction": direction,
-        "relation_count": len(relations),
-        "relations": relations,
-    }
-
-
-@mcp.tool(title="Ver configuración de DOORS", annotations=READ_ONLY)
-def doors_configuration() -> dict[str, Any]:
-    embedding_config = EmbeddingConfig.from_env()
-    return {
-        "ok": True,
-        "default_module_path": DEFAULT_MODULE_PATH or None,
-        "sqlite_path": str(DEFAULT_DB_PATH),
-        "python_executable": sys.executable,
-        "sync_directory": str(SYNC_DIR),
-        "embedding": embedding_config.public_dict(),
-    }
-
-
-@mcp.tool(title="Iniciar sesión Automation de DOORS", annotations=START_SESSION)
-def start_doors_session() -> dict[str, Any]:
-    """Crea DOORS.Application. Después el usuario debe iniciar sesión en la ventana."""
-    try:
-        _client().start_session()
-        return {
-            "ok": True,
-            "session_started": True,
-            "next_step": "Inicia sesión en la ventana de DOORS y llama a doors_status.",
+) -> list[dict]:
+    repository = _repository()
+    return [
+        {
+            "requirement": requirement,
+            "direction": direction,
+            "relations": repository.get_relations(
+                str(requirement["module_path"]),
+                int(requirement["absolute_number"]),
+                direction=direction,
+                limit=limit,
+            ),
         }
+        for requirement in requirements
+    ]
+
+
+@mcp.tool(title="Estado de la base local", annotations=READ_ONLY)
+def database_status() -> dict[str, Any]:
+    """Describe la base SQLite que alimenta exclusivamente este MCP."""
+    try:
+        status = _repository().status()
+        status["ok"] = True
+        status["semantic_query_model"] = DEFAULT_EMBEDDING_MODEL
+        return status
     except Exception as exc:
         return _error(exc)
 
 
-@mcp.tool(title="Comprobar módulo de DOORS", annotations=READ_ONLY)
-def doors_status(
-    module_path: Annotated[
-        str | None,
-        Field(description="Ruta interna del módulo; usa DOORS_MODULE_PATH si se omite."),
-    ] = None,
-) -> dict[str, Any]:
-    selected: str | None = None
+@mcp.tool(title="Listar modulos locales", annotations=READ_ONLY)
+def list_modules() -> dict[str, Any]:
     try:
-        selected = _module_path(module_path)
-        return _client().status(selected)
+        modules = _repository().list_modules()
+        return {"ok": True, "count": len(modules), "modules": modules}
     except Exception as exc:
-        return _error(exc, selected)
+        return _error(exc)
 
 
-@mcp.tool(title="Listar atributos de objeto", annotations=READ_ONLY)
-def list_object_attributes(
-    module_path: Annotated[
-        str | None,
-        Field(description="Ruta interna del módulo; usa DOORS_MODULE_PATH si se omite."),
-    ] = None,
-) -> dict[str, Any]:
-    selected: str | None = None
-    try:
-        selected = _module_path(module_path)
-        attributes = _client().list_object_attributes(selected)
-        return {
-            "ok": True,
-            "module_path": selected,
-            "attributes": attributes,
-            "count": len(attributes),
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Validar atributos", annotations=READ_ONLY)
-def validate_attributes(
-    attributes: Annotated[
-        list[str],
-        Field(min_length=1, description="Nombres exactos de atributos a validar."),
-    ],
-    module_path: Annotated[
-        str | None,
-        Field(description="Ruta interna del módulo; usa DOORS_MODULE_PATH si se omite."),
-    ] = None,
-) -> dict[str, Any]:
-    selected: str | None = None
-    try:
-        selected = _module_path(module_path)
-        names = _attributes(attributes)
-        _client().validate_attributes(selected, names)
-        return {"ok": True, "module_path": selected, "attributes": names}
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Obtener requisitos directamente de DOORS", annotations=READ_ONLY)
-def list_requirements(
-    after_absolute_number: Annotated[
-        int | None,
-        Field(description="Cursor Absolute Number de la página anterior."),
-    ] = None,
-    limit: Annotated[int, Field(ge=1, le=100)] = 25,
-    attributes: Annotated[list[str] | None, Field()] = None,
-    max_attribute_chars: Annotated[int, Field(ge=100, le=50000)] = 12000,
-    module_path: Annotated[str | None, Field()] = None,
-) -> dict[str, Any]:
-    selected: str | None = None
-    try:
-        selected = _module_path(module_path)
-        names = _attributes(attributes)
-        _client().validate_attributes(selected, names)
-        result = _client().list_requirements(
-            selected,
-            after_absolute_number=after_absolute_number,
-            limit=limit,
-            attributes=names,
-            max_attribute_chars=max_attribute_chars,
-        )
-        result["module_path"] = selected
-        return result
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-# ---------------------------------------------------------------------------
-# Tools sobre la copia SQLite local
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(title="Estado de la base local de requisitos", annotations=READ_ONLY)
-def local_database_status(
-    module_path: Annotated[str | None, Field()] = None,
-) -> dict[str, Any]:
-    try:
-        selected = _optional_module_path(module_path)
-        repository = _repository()
-        config = EmbeddingConfig.from_env()
-        if selected:
-            count = repository.count_requirements(selected)
-        else:
-            with repository.connect() as conn:
-                count = int(
-                    conn.execute(
-                        "SELECT COUNT(*) FROM requirements WHERE is_deleted = 0"
-                    ).fetchone()[0]
-                )
-        return {
-            "ok": True,
-            "sqlite_path": str(DEFAULT_DB_PATH),
-            "module_path": selected,
-            "active_requirements": count,
-            "traceability_links": _trace_repository().count_links(module_path=selected),
-            "embedding": repository.embedding_status(
-                module_path=selected,
-                model=config.model or None,
-            ),
-            "embedding_config": config.public_dict(),
-        }
-    except Exception as exc:
-        return _error(exc, _optional_module_path(module_path))
-
-
-@mcp.tool(title="Buscar requisito por UniqueIdentifier", annotations=READ_ONLY)
+@mcp.tool(title="Buscar por UniqueIdentifier", annotations=READ_ONLY)
 def find_requirement_by_unique_identifier(
     unique_identifier: Annotated[
         str,
-        Field(description="Valor de REM_UniqueIdentifier, por ejemplo REQ_MENSAJES."),
+        Field(description="REM_UniqueIdentifier, por ejemplo REQ_MENSAJES."),
     ],
     module_path: Annotated[str | None, Field()] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
     try:
         value = _required_text(unique_identifier, "unique_identifier")
         results = _repository().find_by_unique_identifier(
             value,
-            module_path=selected,
+            module_path=_optional_module_path(module_path),
             limit=limit,
         )
         return {"ok": True, "query": value, "count": len(results), "results": results}
     except Exception as exc:
-        return _error(exc, selected)
+        return _error(exc)
 
 
-@mcp.tool(title="Buscar requisito por identifier de DOORS", annotations=READ_ONLY)
+@mcp.tool(title="Buscar por identifier de DOORS", annotations=READ_ONLY)
 def find_requirement_by_identifier(
-    identifier: Annotated[str, Field(description="Valor de identifier(obj) en DOORS.")],
+    identifier: Annotated[str, Field(description="identifier(obj) guardado en SQLite.")],
     module_path: Annotated[str | None, Field()] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
     try:
         value = _required_text(identifier, "identifier")
         results = _repository().find_by_identifier(
             value,
-            module_path=selected,
+            module_path=_optional_module_path(module_path),
             limit=limit,
         )
         return {"ok": True, "query": value, "count": len(results), "results": results}
     except Exception as exc:
-        return _error(exc, selected)
+        return _error(exc)
 
 
-@mcp.tool(title="Obtener requisito por ID local SQLite", annotations=READ_ONLY)
-def get_local_requirement_by_id(
+@mcp.tool(title="Obtener requisito por ID SQLite", annotations=READ_ONLY)
+def get_requirement_by_id(
     requirement_id: Annotated[int, Field(ge=1)],
 ) -> dict[str, Any]:
     try:
-        requirement = _repository().get_requirement_by_database_id(requirement_id)
+        requirement = _repository().get_by_database_id(requirement_id)
         return {
             "ok": requirement is not None,
             "requirement": requirement,
@@ -360,286 +180,186 @@ def get_local_requirement_by_id(
         return _error(exc)
 
 
-@mcp.tool(title="Obtener requisito local por Absolute Number", annotations=READ_ONLY)
-def get_local_requirement_by_absolute_number(
+@mcp.tool(title="Buscar por Absolute Number", annotations=READ_ONLY)
+def get_requirement_by_absolute_number(
     absolute_number: Annotated[int, Field(ge=1)],
-    module_path: Annotated[str | None, Field()] = None,
-) -> dict[str, Any]:
-    selected: str | None = None
-    try:
-        selected = _module_path(module_path)
-        requirement = _repository().get_requirement(selected, absolute_number)
-        return {
-            "ok": requirement is not None,
-            "module_path": selected,
-            "absolute_number": absolute_number,
-            "requirement": requirement,
-            "error": (
-                None
-                if requirement
-                else f"No existe Absolute Number {absolute_number} en {selected}."
-            ),
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-# ---------------------------------------------------------------------------
-# Trazabilidad / relaciones de requisitos
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(title="Estado de trazabilidad local", annotations=READ_ONLY)
-def traceability_status(
-    module_path: Annotated[str | None, Field()] = None,
-) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
-    try:
-        trace_repository = _trace_repository()
-        return {
-            "ok": True,
-            "module_path": selected,
-            "link_count": trace_repository.count_links(module_path=selected),
-            "recent_sync_runs": (
-                trace_repository.recent_sync_runs(selected, limit=10)
-                if selected
-                else []
-            ),
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Sincronizar trazabilidad desde DOORS", annotations=LOCAL_WRITE)
-def sync_traceability(
-    module_path: Annotated[str | None, Field()] = None,
-    direction: Annotated[
-        Literal["incoming", "outgoing", "both"],
-        Field(description="Dirección de relaciones a extraer."),
-    ] = "both",
-    strict_incoming: Annotated[
-        bool,
-        Field(
-            description=(
-                "Si es true, aborta sin sustituir la copia local cuando DOORS "
-                "no puede cargar algún módulo origen de enlaces entrantes."
-            )
-        ),
-    ] = True,
-) -> dict[str, Any]:
-    selected: str | None = None
-    try:
-        selected = _module_path(module_path)
-        repository = _repository()
-        if repository.count_requirements(selected) == 0:
-            raise ValueError(
-                "No hay requisitos locales del módulo. Sincroniza primero los requisitos."
-            )
-        stats = sync_module_traceability(
-            DoorsTraceabilitySource(_client()),
-            repository,
-            selected,
-            direction=direction,
-            load_incoming_sources=direction in ("incoming", "both"),
-            strict_incoming=strict_incoming,
-        )
-        return {
-            "ok": True,
-            "module_path": selected,
-            "stats": stats.as_dict(),
-            "link_count": _trace_repository().count_links(module_path=selected),
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Relaciones por Absolute Number", annotations=READ_ONLY)
-def get_requirement_relations_by_absolute_number(
-    absolute_number: Annotated[int, Field(ge=1)],
-    module_path: Annotated[str | None, Field()] = None,
-    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
-    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
-) -> dict[str, Any]:
-    selected: str | None = None
-    try:
-        selected = _module_path(module_path)
-        requirement = _repository().get_requirement(selected, absolute_number)
-        if requirement is None:
-            raise ValueError(
-                f"No existe Absolute Number {absolute_number} en {selected}."
-            )
-        return {"ok": True, **_relations_for_requirement(requirement, direction=direction, limit=limit)}
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Relaciones por UniqueIdentifier", annotations=READ_ONLY)
-def get_requirement_relations_by_unique_identifier(
-    unique_identifier: Annotated[
-        str,
-        Field(description="Valor REM_UniqueIdentifier, por ejemplo REQ_MENSAJES."),
-    ],
-    module_path: Annotated[str | None, Field()] = None,
-    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
-    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
-) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
-    try:
-        value = _required_text(unique_identifier, "unique_identifier")
-        requirements = _repository().find_by_unique_identifier(
-            value,
-            module_path=selected,
-            limit=100,
-        )
-        groups = [
-            _relations_for_requirement(req, direction=direction, limit=limit)
-            for req in requirements
-        ]
-        return {
-            "ok": True,
-            "unique_identifier": value,
-            "matches": len(groups),
-            "results": groups,
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Relaciones por identifier de DOORS", annotations=READ_ONLY)
-def get_requirement_relations_by_identifier(
-    identifier: Annotated[str, Field(description="Valor de identifier(obj) en DOORS.")],
-    module_path: Annotated[str | None, Field()] = None,
-    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
-    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
-) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
-    try:
-        value = _required_text(identifier, "identifier")
-        requirements = _repository().find_by_identifier(
-            value,
-            module_path=selected,
-            limit=100,
-        )
-        groups = [
-            _relations_for_requirement(req, direction=direction, limit=limit)
-            for req in requirements
-        ]
-        return {
-            "ok": True,
-            "identifier": value,
-            "matches": len(groups),
-            "results": groups,
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Relaciones por ID local SQLite", annotations=READ_ONLY)
-def get_requirement_relations_by_id(
-    requirement_id: Annotated[int, Field(ge=1)],
-    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
-    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+    module_path: Annotated[
+        str | None,
+        Field(description="Opcional. Recomendado si la DB contiene varios modulos."),
+    ] = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
     try:
-        requirement = _repository().get_requirement_by_database_id(requirement_id)
-        if requirement is None:
-            raise ValueError(f"No existe requirement.id={requirement_id}.")
-        return {"ok": True, **_relations_for_requirement(requirement, direction=direction, limit=limit)}
-    except Exception as exc:
-        return _error(exc)
-
-
-# ---------------------------------------------------------------------------
-# Embeddings
-# ---------------------------------------------------------------------------
-
-
-@mcp.tool(title="Estado de embeddings locales", annotations=READ_ONLY)
-def embedding_status(
-    module_path: Annotated[str | None, Field()] = None,
-) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
-    try:
-        config = EmbeddingConfig.from_env()
-        return {
-            "ok": True,
-            "config": config.public_dict(),
-            "status": _repository().embedding_status(
-                module_path=selected,
-                model=config.model or None,
-            ),
-        }
-    except Exception as exc:
-        return _error(exc, selected)
-
-
-@mcp.tool(title="Calcular embeddings pendientes", annotations=LOCAL_WRITE)
-def calculate_embeddings(
-    module_path: Annotated[str | None, Field()] = None,
-    force: Annotated[bool, Field(description="Recalcula embeddings ya actuales.")] = False,
-    limit: Annotated[int | None, Field(ge=1)] = None,
-    batch_size: Annotated[int | None, Field(ge=1, le=512)] = None,
-) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
-    try:
-        config = EmbeddingConfig.from_env().with_batch_size(batch_size).validate()
-        provider = OpenAICompatibleEmbeddingProvider(config)
-        stats = generate_embeddings(
-            _repository(),
-            provider,
-            module_path=selected,
-            batch_size=config.batch_size,
-            max_input_chars=config.max_input_chars,
-            force=force,
+        results = _repository().find_by_absolute_number(
+            absolute_number,
+            module_path=_optional_module_path(module_path),
             limit=limit,
         )
         return {
             "ok": True,
-            "model": config.model,
-            "module_path": selected,
-            "stats": stats.as_dict(),
-            "status": _repository().embedding_status(
-                module_path=selected,
-                model=config.model,
-            ),
+            "absolute_number": absolute_number,
+            "count": len(results),
+            "ambiguous": len(results) > 1,
+            "results": results,
         }
     except Exception as exc:
-        return _error(exc, selected)
+        return _error(exc)
 
 
-@mcp.tool(title="Buscar requisitos por similitud semántica", annotations=READ_ONLY)
+@mcp.tool(title="Buscar texto en requisitos locales", annotations=READ_ONLY)
+def search_requirements_text(
+    query: Annotated[str, Field(min_length=1)],
+    module_path: Annotated[str | None, Field()] = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 20,
+) -> dict[str, Any]:
+    try:
+        results = _repository().search_text(
+            _required_text(query, "query"),
+            module_path=_optional_module_path(module_path),
+            limit=limit,
+        )
+        return {"ok": True, "query": query, "count": len(results), "results": results}
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(title="Buscar requisitos por embedding", annotations=READ_ONLY)
 def search_requirements_by_embedding(
-    query: Annotated[str, Field(min_length=1, description="Consulta en lenguaje natural.")],
+    query: Annotated[
+        str,
+        Field(min_length=1, description="Consulta semantica en lenguaje natural."),
+    ],
     module_path: Annotated[str | None, Field()] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 10,
-    min_score: Annotated[
-        float | None,
-        Field(ge=-1.0, le=1.0, description="Umbral opcional de similitud coseno."),
-    ] = None,
+    min_score: Annotated[float | None, Field(ge=-1.0, le=1.0)] = None,
 ) -> dict[str, Any]:
-    selected = _optional_module_path(module_path)
+    """Genera solo el vector de consulta con Daisei y busca en la SQLite local."""
     try:
-        config = EmbeddingConfig.from_env().validate()
-        provider = OpenAICompatibleEmbeddingProvider(config)
-        query_vector = embed_query(provider, query)
-        results = _repository().search_by_embedding(
+        repository = _repository()
+        status = repository.status()
+        available_models = status["embedding_models"]
+        if DEFAULT_EMBEDDING_MODEL not in available_models:
+            raise ValueError(
+                f"La DB no contiene embeddings para el modelo {DEFAULT_EMBEDDING_MODEL!r}. "
+                f"Modelos disponibles: {available_models}. Calculalos antes de iniciar el MCP."
+            )
+
+        provider = _embedding_provider()
+        query_vector = provider.embed_one(_required_text(query, "query"))
+        results = repository.search_by_embedding(
             query_vector,
-            model=config.model,
-            module_path=selected,
+            model=provider.model,
+            module_path=_optional_module_path(module_path),
             limit=limit,
             min_score=min_score,
         )
         return {
             "ok": True,
             "query": query,
-            "model": config.model,
-            "module_path": selected,
+            "model": provider.model,
             "count": len(results),
             "results": results,
         }
     except Exception as exc:
-        return _error(exc, selected)
+        return _error(exc)
+
+
+@mcp.tool(title="Relaciones por UniqueIdentifier", annotations=READ_ONLY)
+def get_relations_by_unique_identifier(
+    unique_identifier: Annotated[str, Field(min_length=1)],
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    try:
+        requirements = _repository().find_by_unique_identifier(
+            _required_text(unique_identifier, "unique_identifier"),
+            module_path=_optional_module_path(module_path),
+            limit=100,
+        )
+        contexts = _relations_for_matches(requirements, direction=direction, limit=limit)
+        return {"ok": True, "count": len(contexts), "results": contexts}
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(title="Relaciones por identifier", annotations=READ_ONLY)
+def get_relations_by_identifier(
+    identifier: Annotated[str, Field(min_length=1)],
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    try:
+        requirements = _repository().find_by_identifier(
+            _required_text(identifier, "identifier"),
+            module_path=_optional_module_path(module_path),
+            limit=100,
+        )
+        contexts = _relations_for_matches(requirements, direction=direction, limit=limit)
+        return {"ok": True, "count": len(contexts), "results": contexts}
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(title="Relaciones por ID SQLite", annotations=READ_ONLY)
+def get_relations_by_id(
+    requirement_id: Annotated[int, Field(ge=1)],
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    try:
+        requirement = _repository().get_by_database_id(requirement_id)
+        if requirement is None:
+            raise ValueError(f"No existe requirement.id={requirement_id}.")
+        result = _relations_for_matches([requirement], direction=direction, limit=limit)
+        return {"ok": True, **result[0]}
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(title="Relaciones por Absolute Number", annotations=READ_ONLY)
+def get_relations_by_absolute_number(
+    absolute_number: Annotated[int, Field(ge=1)],
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    try:
+        requirements = _repository().find_by_absolute_number(
+            absolute_number,
+            module_path=_optional_module_path(module_path),
+            limit=100,
+        )
+        contexts = _relations_for_matches(requirements, direction=direction, limit=limit)
+        return {
+            "ok": True,
+            "count": len(contexts),
+            "ambiguous": len(contexts) > 1,
+            "results": contexts,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="MCP de solo lectura sobre la base SQLite de requisitos."
+    )
+    parser.add_argument(
+        "--db",
+        required=True,
+        help="Ruta a doors_requirements.db. Es la unica configuracion del MCP.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    global _REPOSITORY
+    args = _parse_args()
+    _REPOSITORY = LocalRequirementsRepository(args.db)
+    mcp.run()
 
 
 if __name__ == "__main__":
-    mcp.run()
+    main()
