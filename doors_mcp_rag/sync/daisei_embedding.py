@@ -3,16 +3,23 @@ from __future__ import annotations
 import math
 import os
 from numbers import Real
+from pathlib import Path
 from typing import Any, Sequence
 
 from dotenv import load_dotenv
 from daisei import Daisei, ConnectionConfig
 
 
-# Toda la configuracion de red, proxy, certificados y API queda encapsulada
-# en ConnectionConfig.from_env(). El MCP no necesita conocer ninguno de esos
-# parametros; solo recibe la ruta a SQLite.
-load_dotenv()
+# La configuracion de Daisei vive fuera del MCP. Se busca primero un .env en
+# la raiz de doors_mcp_rag, independientemente del directorio desde el que VS
+# Code arranque el servidor MCP. ConnectionConfig.from_env() encapsula proxy,
+# certificados, API key, base_url, timeout, redirects, etc.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ENV = PROJECT_ROOT / ".env"
+if PROJECT_ENV.exists():
+    load_dotenv(PROJECT_ENV)
+else:
+    load_dotenv()
 
 DEFAULT_EMBEDDING_MODEL = os.environ.get(
     "DAISEI_EMBEDDING_MODEL",
@@ -74,10 +81,10 @@ def _extract_embedding(response: Any) -> list[float]:
 
 
 class DaiseiEmbeddingProvider:
-    """Proveedor de embeddings basado exclusivamente en la clase Daisei.
+    """Adaptador minimo de Daisei para embeddings.
 
-    No usa chat ni ninguna otra capacidad del LLM. La conexion se crea de forma
-    perezosa al primer embedding y se cierra explicitamente con close().
+    No usa chat, chat_stream, analyze_image ni list_models. El unico metodo de
+    inferencia utilizado es create_embedding(text, model).
     """
 
     def __init__(self, model: str | None = None):
@@ -110,8 +117,8 @@ class DaiseiEmbeddingProvider:
         return _extract_embedding(response)
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        # Daisei expone create_embedding para un texto. Mantenemos una interfaz
-        # por lotes para que el resto del proyecto no dependa de ese detalle.
+        # Daisei expone create_embedding para un texto. Mantenemos esta interfaz
+        # por lotes para el generador offline de embeddings de requisitos.
         vectors = [self.embed_one(text) for text in texts]
         if vectors and any(len(vector) != len(vectors[0]) for vector in vectors):
             raise DaiseiEmbeddingError(
