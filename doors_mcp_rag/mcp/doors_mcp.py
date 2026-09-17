@@ -109,7 +109,14 @@ def _relations_for_matches(
     ]
 
 
-@mcp.tool(title="Estado de la base local", annotations=READ_ONLY)
+@mcp.tool(
+    title="Estado de la base local",
+    description=(
+        "Devuelve el estado de la base SQLite local: numero de requisitos, modulos, "
+        "enlaces de trazabilidad y modelos de embedding almacenados. No consulta DOORS."
+    ),
+    annotations=READ_ONLY,
+)
 def database_status() -> dict[str, Any]:
     """Describe exclusivamente el contenido disponible en SQLite."""
     try:
@@ -122,7 +129,14 @@ def database_status() -> dict[str, Any]:
         return _error(exc)
 
 
-@mcp.tool(title="Listar modulos locales", annotations=READ_ONLY)
+@mcp.tool(
+    title="Listar modulos locales",
+    description=(
+        "Lista los modulos DOORS que ya estan almacenados en SQLite e indica cuantos "
+        "requisitos activos y embeddings contiene cada uno."
+    ),
+    annotations=READ_ONLY,
+)
 def list_modules() -> dict[str, Any]:
     try:
         modules = _repository().list_modules()
@@ -131,7 +145,14 @@ def list_modules() -> dict[str, Any]:
         return _error(exc)
 
 
-@mcp.tool(title="Buscar por UniqueIdentifier", annotations=READ_ONLY)
+@mcp.tool(
+    title="Buscar por UniqueIdentifier",
+    description=(
+        "Busca requisitos por coincidencia exacta del REM_UniqueIdentifier almacenado "
+        "en la columna unique_identifier, por ejemplo REQ_MENSAJES."
+    ),
+    annotations=READ_ONLY,
+)
 def find_requirement_by_unique_identifier(
     unique_identifier: Annotated[
         str,
@@ -152,7 +173,14 @@ def find_requirement_by_unique_identifier(
         return _error(exc)
 
 
-@mcp.tool(title="Buscar por identifier", annotations=READ_ONLY)
+@mcp.tool(
+    title="Buscar por identifier",
+    description=(
+        "Busca requisitos por coincidencia exacta del identifier de objeto de DOORS "
+        "que fue guardado previamente en SQLite."
+    ),
+    annotations=READ_ONLY,
+)
 def find_requirement_by_identifier(
     identifier: Annotated[str, Field(description="identifier(obj) guardado en SQLite.")],
     module_path: Annotated[str | None, Field()] = None,
@@ -170,7 +198,14 @@ def find_requirement_by_identifier(
         return _error(exc)
 
 
-@mcp.tool(title="Obtener requisito por ID SQLite", annotations=READ_ONLY)
+@mcp.tool(
+    title="Obtener requisito por ID SQLite",
+    description=(
+        "Obtiene un requisito concreto usando la clave primaria id de la tabla "
+        "requirements de SQLite."
+    ),
+    annotations=READ_ONLY,
+)
 def get_requirement_by_id(
     requirement_id: Annotated[int, Field(ge=1)],
 ) -> dict[str, Any]:
@@ -185,7 +220,14 @@ def get_requirement_by_id(
         return _error(exc)
 
 
-@mcp.tool(title="Buscar por Absolute Number", annotations=READ_ONLY)
+@mcp.tool(
+    title="Buscar por Absolute Number",
+    description=(
+        "Busca requisitos por el Absolute Number original de DOORS almacenado en SQLite. "
+        "Puede limitarse a un module_path para evitar ambiguedades entre modulos."
+    ),
+    annotations=READ_ONLY,
+)
 def get_requirement_by_absolute_number(
     absolute_number: Annotated[int, Field(ge=1)],
     module_path: Annotated[
@@ -211,7 +253,14 @@ def get_requirement_by_absolute_number(
         return _error(exc)
 
 
-@mcp.tool(title="Buscar texto en requisitos locales", annotations=READ_ONLY)
+@mcp.tool(
+    title="Buscar texto en requisitos locales",
+    description=(
+        "Realiza una busqueda textual local sobre identifier, unique_identifier, heading "
+        "y text de los requisitos activos almacenados en SQLite."
+    ),
+    annotations=READ_ONLY,
+)
 def search_requirements_text(
     query: Annotated[str, Field(min_length=1)],
     module_path: Annotated[str | None, Field()] = None,
@@ -229,7 +278,15 @@ def search_requirements_text(
         return _error(exc)
 
 
-@mcp.tool(title="Buscar requisitos por embedding", annotations=READ_ONLY)
+@mcp.tool(
+    title="Buscar requisitos por embedding",
+    description=(
+        "Convierte la consulta en un embedding mediante Daisei y busca por similitud "
+        "coseno exclusivamente contra los vectores ya almacenados en SQLite. Daisei "
+        "no obtiene requisitos ni genera una respuesta de chat."
+    ),
+    annotations=READ_ONLY,
+)
 def search_requirements_by_embedding(
     query: Annotated[
         str,
@@ -271,7 +328,14 @@ def search_requirements_by_embedding(
         return _error(exc)
 
 
-@mcp.tool(title="Buscar mediante un vector ya calculado", annotations=READ_ONLY)
+@mcp.tool(
+    title="Buscar mediante un vector ya calculado",
+    description=(
+        "Busca requisitos por similitud coseno usando un vector proporcionado por el "
+        "cliente. La operacion es completamente local y no realiza llamadas a Daisei."
+    ),
+    annotations=READ_ONLY,
+)
 def search_requirements_by_vector(
     embedding: Annotated[
         list[float],
@@ -305,7 +369,14 @@ def search_requirements_by_vector(
         return _error(exc)
 
 
-@mcp.tool(title="Relaciones por UniqueIdentifier", annotations=READ_ONLY)
+@mcp.tool(
+    title="Relaciones por UniqueIdentifier",
+    description=(
+        "Obtiene los enlaces de trazabilidad almacenados en SQLite para los requisitos "
+        "que coincidan con un UniqueIdentifier. Permite relaciones entrantes, salientes o ambas."
+    ),
+    annotations=READ_ONLY,
+)
 def get_relations_by_unique_identifier(
     unique_identifier: Annotated[str, Field(min_length=1)],
     module_path: Annotated[str | None, Field()] = None,
@@ -324,7 +395,14 @@ def get_relations_by_unique_identifier(
         return _error(exc)
 
 
-@mcp.tool(title="Relaciones por identifier", annotations=READ_ONLY)
+@mcp.tool(
+    title="Relaciones por identifier",
+    description=(
+        "Obtiene los enlaces de trazabilidad almacenados en SQLite para los requisitos "
+        "que coincidan con un identifier de DOORS guardado previamente."
+    ),
+    annotations=READ_ONLY,
+)
 def get_relations_by_identifier(
     identifier: Annotated[str, Field(min_length=1)],
     module_path: Annotated[str | None, Field()] = None,
@@ -343,7 +421,14 @@ def get_relations_by_identifier(
         return _error(exc)
 
 
-@mcp.tool(title="Relaciones por ID SQLite", annotations=READ_ONLY)
+@mcp.tool(
+    title="Relaciones por ID SQLite",
+    description=(
+        "Obtiene los enlaces de trazabilidad de un requisito identificado por la clave "
+        "primaria id de SQLite."
+    ),
+    annotations=READ_ONLY,
+)
 def get_relations_by_id(
     requirement_id: Annotated[int, Field(ge=1)],
     direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
@@ -359,7 +444,14 @@ def get_relations_by_id(
         return _error(exc)
 
 
-@mcp.tool(title="Relaciones por Absolute Number", annotations=READ_ONLY)
+@mcp.tool(
+    title="Relaciones por Absolute Number",
+    description=(
+        "Obtiene los enlaces de trazabilidad almacenados para uno o varios requisitos "
+        "con un Absolute Number concreto. Puede filtrarse por module_path."
+    ),
+    annotations=READ_ONLY,
+)
 def get_relations_by_absolute_number(
     absolute_number: Annotated[int, Field(ge=1)],
     module_path: Annotated[str | None, Field()] = None,
