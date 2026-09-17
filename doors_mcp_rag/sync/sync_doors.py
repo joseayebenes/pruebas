@@ -5,11 +5,6 @@ import os
 from pathlib import Path
 
 from doors_client import DoorsClient
-from embeddings import (
-    EmbeddingConfig,
-    OpenAICompatibleEmbeddingProvider,
-    generate_embeddings,
-)
 from repository import RequirementsRepository
 from sync_service import sync_module
 from traceability import DoorsTraceabilitySource, TraceabilityRepository, sync_module_traceability
@@ -20,12 +15,12 @@ DEFAULT_DB = Path(__file__).with_name("doors_requirements.db")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sincroniza un módulo IBM DOORS Classic hacia SQLite."
+        description="Sincroniza IBM DOORS Classic hacia SQLite."
     )
     parser.add_argument(
         "--module",
         default=os.environ.get("DOORS_MODULE_PATH", ""),
-        help="Ruta interna completa del módulo DOORS.",
+        help="Ruta interna completa del modulo DOORS.",
     )
     parser.add_argument(
         "--db",
@@ -36,31 +31,31 @@ def parse_args() -> argparse.Namespace:
         "--page-size",
         type=int,
         default=50,
-        help="Objetos leídos por llamada DXL (default: 50).",
+        help="Objetos leidos por llamada DXL (default: 50).",
     )
     parser.add_argument(
         "--attributes",
         default="",
         help=(
             "Lista separada por comas de atributos extra. Object Heading, "
-            "Object Text y REM_UniqueIdentifier se añaden automáticamente."
+            "Object Text y REM_UniqueIdentifier se anaden automaticamente."
         ),
     )
     parser.add_argument(
         "--modified-attribute",
         default="",
-        help="Atributo opcional usado como fecha/versión de modificación.",
+        help="Atributo opcional usado como fecha/version de modificacion.",
     )
     parser.add_argument(
         "--max-attribute-chars",
         type=int,
         default=20_000,
-        help="Máximo de caracteres leídos por atributo y objeto.",
+        help="Maximo de caracteres leidos por atributo y objeto.",
     )
     parser.add_argument(
         "--no-login-pause",
         action="store_true",
-        help="No esperar ENTER después de crear DOORS.Application.",
+        help="No esperar ENTER despues de crear DOORS.Application.",
     )
     parser.add_argument(
         "--sync-links",
@@ -71,34 +66,15 @@ def parse_args() -> argparse.Namespace:
         "--links-direction",
         choices=("incoming", "outgoing", "both"),
         default="both",
-        help="Dirección de relaciones a extraer con --sync-links.",
+        help="Direccion de relaciones a extraer con --sync-links.",
     )
     parser.add_argument(
         "--allow-incomplete-incoming",
         action="store_true",
         help=(
-            "Con --sync-links permite guardar enlaces aunque algún módulo origen "
+            "Con --sync-links permite guardar enlaces aunque algun modulo origen "
             "no pueda cargarse. Por defecto se conserva la copia anterior."
         ),
-    )
-    parser.add_argument(
-        "--calculate-embeddings",
-        action="store_true",
-        help=(
-            "Tras sincronizar DOORS, calcula los embeddings pendientes usando "
-            "DOORS_EMBEDDING_BASE_URL y DOORS_EMBEDDING_MODEL."
-        ),
-    )
-    parser.add_argument(
-        "--embedding-force",
-        action="store_true",
-        help="Recalcula todos los embeddings del módulo.",
-    )
-    parser.add_argument(
-        "--embedding-batch-size",
-        type=int,
-        default=None,
-        help="Sobrescribe DOORS_EMBEDDING_BATCH_SIZE para esta ejecución.",
     )
     return parser.parse_args()
 
@@ -107,7 +83,7 @@ def main() -> None:
     args = parse_args()
     module_path = args.module.strip()
     if not module_path:
-        raise SystemExit("Falta --module y DOORS_MODULE_PATH no está definida.")
+        raise SystemExit("Falta --module y DOORS_MODULE_PATH no esta definida.")
 
     extra_attributes = [
         item.strip()
@@ -119,19 +95,19 @@ def main() -> None:
     client = DoorsClient()
 
     try:
-        print("1. Creando sesión Automation de DOORS...")
+        print("1. Creando sesion Automation de DOORS...")
         client.start_session()
-        print("   Sesión Automation creada.")
+        print("   Sesion Automation creada.")
 
         if not args.no_login_pause:
             print()
-            print("Inicia sesión en la ventana de DOORS que se ha abierto.")
-            input("Cuando DOORS esté listo, pulsa ENTER para continuar... ")
+            print("Inicia sesion en la ventana de DOORS que se ha abierto.")
+            input("Cuando DOORS este listo, pulsa ENTER para continuar... ")
 
         print()
-        print(f"2. Comprobando módulo: {module_path}")
+        print(f"2. Comprobando modulo: {module_path}")
         status = client.status(module_path)
-        print("   Módulo accesible:", status["module"]["full_name"])
+        print("   Modulo accesible:", status["module"]["full_name"])
 
         print()
         print("3. Sincronizando requisitos...")
@@ -146,9 +122,9 @@ def main() -> None:
         )
 
         print()
-        print("Sincronización completada")
+        print("Sincronizacion completada")
         print("-------------------------")
-        print(f"Páginas:       {stats.pages}")
+        print(f"Paginas:       {stats.pages}")
         print(f"Vistos:        {stats.requirements_seen}")
         print(f"Insertados:    {stats.inserted}")
         print(f"Actualizados:  {stats.updated}")
@@ -170,36 +146,18 @@ def main() -> None:
             trace_repository = TraceabilityRepository(repository)
             print("Trazabilidad:", trace_stats.as_dict())
             print(
-                "Links del módulo en DB:",
+                "Links del modulo en DB:",
                 trace_repository.count_links(module_path=module_path),
             )
 
+        print()
+        print(
+            "La descarga ha terminado. Los embeddings se calculan en un paso "
+            "separado con: python .\\sync\\embed_requirements.py --db <ruta>"
+        )
+
     finally:
         client.close()
-
-    if args.calculate_embeddings:
-        print()
-        step = "5" if args.sync_links else "4"
-        print(f"{step}. Calculando embeddings pendientes...")
-        config = (
-            EmbeddingConfig.from_env()
-            .with_batch_size(args.embedding_batch_size)
-            .validate()
-        )
-        provider = OpenAICompatibleEmbeddingProvider(config)
-        embedding_stats = generate_embeddings(
-            repository,
-            provider,
-            module_path=module_path,
-            batch_size=config.batch_size,
-            max_input_chars=config.max_input_chars,
-            force=args.embedding_force,
-        )
-        print("Embeddings:", embedding_stats.as_dict())
-        print(
-            "Estado:",
-            repository.embedding_status(module_path=module_path, model=config.model),
-        )
 
 
 if __name__ == "__main__":
