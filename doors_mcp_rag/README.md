@@ -1,135 +1,81 @@
-# DOORS MCP + Requirements Knowledge Base
+# Requirements Knowledge Base MCP
 
-Prototipo para exponer IBM DOORS Classic a agentes de IA mediante MCP y construir una copia local de requisitos preparada para búsqueda, embeddings, trazabilidad y RAG.
+Proyecto para copiar requisitos y trazabilidad desde IBM DOORS Classic a SQLite y exponer **solo la base de datos local** a un agente mediante MCP.
 
-## Estado actual
-
-Implementado en esta rama:
-
-- acceso a IBM DOORS Classic mediante `DOORS.Application` + DXL;
-- servidor MCP modular;
-- validación estricta de atributos;
-- timeouts del worker COM;
-- persistencia local SQLite y migraciones de esquema;
-- sincronización DOORS → SQLite con detección `inserted / updated / unchanged`;
-- `REM_UniqueIdentifier` proyectado a `requirements.unique_identifier` (`NULL` si está vacío);
-- columna `embedding` en SQLite, almacenada como vector `float32` en BLOB;
-- metadatos de embedding: modelo, dimensión, hash del contenido y fecha;
-- invalidación automática del embedding cuando cambia el requisito;
-- generación incremental de embeddings mediante un endpoint OpenAI-compatible configurable;
-- búsqueda semántica local por similitud coseno;
-- búsquedas MCP por UniqueIdentifier, identifier de DOORS, Absolute Number e ID SQLite;
-- extracción de enlaces entrantes y salientes estándar de DOORS;
-- persistencia del grafo de trazabilidad en `links`;
-- consulta MCP de relaciones por UniqueIdentifier, identifier, Absolute Number e ID SQLite;
-- detección segura de requisitos desaparecidos;
-- reactivación de requisitos que reaparecen;
-- paginación por cursor para evitar reescaneos crecientes;
-- watchdog DXL configurable mediante `pragma runLim`;
-- saneamiento de caracteres de control en JSON procedente de DOORS;
-- pruebas locales de sincronización, embeddings y trazabilidad.
-
-## Estructura
+La arquitectura separa completamente la ingesta del uso por IA:
 
 ```text
-doors_mcp_rag/
-├── README.md
-├── requirements.txt
-├── mcp/
-│   └── doors_mcp.py
-├── sync/
-│   ├── models.py
-│   ├── repository.py
-│   ├── doors_client.py
-│   ├── sync_service.py
-│   ├── traceability.py
-│   ├── sync_traceability.py
-│   ├── embeddings.py
-│   ├── embed_requirements.py
-│   └── sync_doors.py
-├── tests/
-│   ├── test_sync_fake.py
-│   ├── test_repository_embeddings.py
-│   ├── test_traceability_repository.py
-│   ├── test_dxl_generation.py
-│   └── test_json_control_chars.py
-└── docs/
-    ├── SPECIFICATION.md
-    ├── EMBEDDINGS.md
-    ├── TRACEABILITY.md
-    ├── README_STEP1.md
-    ├── README_TIMEOUT_FIX.md
-    └── README_DXL_PARSE_FIX.md
+                    PROCESO DE INGESTA
+IBM DOORS Classic ───────────────────────> SQLite
+          │                                  │
+          │ COM + DXL                        │ requirements
+          │                                  │ attributes
+          └─────────────────────────────────>│ links
+                                             │ embeddings
+                                             │
+                                             ▼
+                                      MCP READ-ONLY
+                                             │
+                                             ▼
+                                      VS Code / agente
 ```
 
-## Requisitos
+## Regla principal del MCP
 
-- Windows
-- IBM DOORS Classic
-- Python 3.10+
+El servidor `mcp/doors_mcp.py` **no accede a DOORS**.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+No importa `DoorsClient`, no usa COM, no ejecuta DXL, no inicia sesiones de DOORS y no contiene tools de sincronizacion. El unico argumento de configuracion del proceso MCP es:
+
+```text
+--db <ruta-a-la-base-sqlite>
 ```
 
-## Modelo SQLite
+SQLite se abre con `mode=ro` y `PRAGMA query_only=ON`, por lo que el MCP tampoco puede modificar la base accidentalmente.
 
-La identidad estable del objeto DOORS sigue siendo:
+La unica llamada externa opcional durante una busqueda semantica es `Daisei.create_embedding()` para convertir **el texto de la consulta** en un vector. Los requisitos, atributos, identificadores y relaciones devueltos proceden siempre de SQLite. No se usa `chat`, `chat_stream`, `list_models` ni ninguna llamada de generacion de texto.
+
+## Datos almacenados
+
+La identidad estable de un objeto DOORS es:
 
 ```text
 (module_path, absolute_number)
 ```
 
-Además se almacenan:
+La tabla `requirements` contiene, entre otros:
 
 ```text
-identifier            identifier(obj) de DOORS
-unique_identifier     REM_UniqueIdentifier; puede ser NULL
-embedding             BLOB float32; puede ser NULL
-embedding_model       modelo que generó el vector
-embedding_dimensions  número de componentes
+id                       ID interno SQLite
+module_path              modulo DOORS de origen
+absolute_number          Absolute Number
+identifier               identifier(obj)
+unique_identifier        REM_UniqueIdentifier; nullable
+outline_number
+heading
+text
+content_hash
+embedding                BLOB float32; nullable
+embedding_model
+embedding_dimensions
 embedding_content_hash
 embedding_updated_at
 ```
 
-`unique_identifier` tiene índice para búsquedas rápidas, pero no se fuerza `UNIQUE` a nivel SQL porque distintos módulos podrían reutilizar el mismo valor.
-
-La trazabilidad se guarda en `links`:
+Los atributos adicionales se guardan en `requirement_attributes` y las relaciones de trazabilidad en `links`:
 
 ```text
-source_module_path
-source_absolute_number
-       │
-       │ link_module_path
-       ▼
-target_module_path
-target_absolute_number
-synced_at
+source_module_path + source_absolute_number
+                  │
+                  │ link_module_path
+                  ▼
+target_module_path + target_absolute_number
 ```
 
-Los extremos se enriquecen en las consultas mediante `LEFT JOIN` con `requirements`, por lo que el MCP devuelve `identifier`, `unique_identifier`, heading e ID local cuando el requisito relacionado también está descargado.
+## Flujo recomendado
 
-## Sincronización real
+### 1. Descargar/actualizar la base
 
-`REM_UniqueIdentifier` se añade automáticamente a los atributos descargados, por lo que no hay que indicarlo en `--attributes`.
-
-```powershell
-$env:DOORS_DXL_RUN_LIMIT_CYCLES = "0"
-$env:DOORS_DXL_TIMEOUT_SECONDS = "90"
-
-python .\sync\sync_doors.py `
-  --module "/Proyecto/Requisitos/Requisitos del sistema" `
-  --page-size 25 `
-  --max-attribute-chars 20000
-```
-
-DOORS continúa siendo la fuente de verdad. SQLite actúa como capa local optimizada para consultas de IA.
-
-## Sincronizar relaciones de trazabilidad
-
-La descarga de requisitos puede incluir también los enlaces:
+Este paso es independiente del MCP y se ejecuta cuando quieras refrescar la copia local:
 
 ```powershell
 python .\sync\sync_doors.py `
@@ -138,179 +84,123 @@ python .\sync\sync_doors.py `
   --links-direction both
 ```
 
-También se pueden refrescar únicamente las relaciones, sin volver a descargar los requisitos:
+`REM_UniqueIdentifier` se descarga automaticamente.
 
-```powershell
-python .\sync\sync_traceability.py `
-  --module "/Proyecto/Requisitos/Requisitos del sistema" `
-  --direction both
+### 2. Calcular embeddings de los requisitos
+
+La configuracion de red y API esta encapsulada por tu clase `Daisei` y `ConnectionConfig.from_env()`.
+
+El adaptador del proyecto esta en:
+
+```text
+sync/daisei_embedding.py
 ```
 
-Para relaciones entrantes, DOORS puede necesitar cargar los módulos origen. Por defecto, si alguno no se puede cargar, la sincronización de links se aborta antes de modificar SQLite para conservar la copia anterior completa.
+Solo utiliza:
 
-Si solo interesan enlaces cuyo origen está en el módulo actual:
-
-```powershell
-python .\sync\sync_traceability.py `
-  --module "/Proyecto/Requisitos/Requisitos del sistema" `
-  --outgoing-only
+```python
+llm.create_embedding(text, model)
 ```
 
-Los enlaces externos OSLC no se incluyen en esta fase.
+La configuracion se carga desde `.env` en la raiz del proyecto. El modelo de embedding se controla con:
 
-## Configurar embeddings
-
-El código usa el SDK de OpenAI, pero el endpoint y el modelo no están fijados. Configura tu servidor OpenAI-compatible mediante variables de entorno:
-
-```powershell
-$env:DOORS_EMBEDDING_BASE_URL = "http://TU_SERVIDOR:PUERTO/v1"
-$env:DOORS_EMBEDDING_MODEL = "TU_MODELO_DE_EMBEDDINGS"
-$env:DOORS_EMBEDDING_API_KEY = "opcional-si-tu-servidor-la-necesita"
-$env:DOORS_EMBEDDING_BATCH_SIZE = "32"
-$env:DOORS_EMBEDDING_TIMEOUT_SECONDS = "60"
-$env:DOORS_EMBEDDING_MAX_INPUT_CHARS = "30000"
+```text
+DAISEI_EMBEDDING_MODEL=text-embedding-gte-multilingual-base
 ```
 
-La clave puede omitirse si el servidor local no usa autenticación.
+El resto de parametros (`base_url`, `api_key`, proxy, certificados, timeout, etc.) los resuelve `ConnectionConfig.from_env()` segun la implementacion de Daisei.
 
-### Opción A: sincronizar y después calcular embeddings
-
-```powershell
-python .\sync\sync_doors.py `
-  --module "/Proyecto/Requisitos/Requisitos del sistema" `
-  --calculate-embeddings
-```
-
-Se pueden combinar requisitos, relaciones y embeddings:
-
-```powershell
-python .\sync\sync_doors.py `
-  --module "/Proyecto/Requisitos/Requisitos del sistema" `
-  --sync-links `
-  --calculate-embeddings
-```
-
-### Opción B: calcularlos posteriormente sin abrir DOORS
+Para calcular o actualizar los vectores despues de descargar DOORS:
 
 ```powershell
 python .\sync\embed_requirements.py `
-  --db .\sync\doors_requirements.db `
-  --module "/Proyecto/Requisitos/Requisitos del sistema"
+  --db .\sync\doors_requirements.db
 ```
 
-Por defecto solo se calculan vectores ausentes, de otro modelo o cuyo requisito haya cambiado. Para regenerarlos todos:
+El calculo es incremental: un requisito solo se vuelve a vectorizar si no tiene embedding, cambia el modelo o cambia su `content_hash`.
+
+### 3. Ejecutar solo el MCP
 
 ```powershell
-python .\sync\embed_requirements.py --force
+python .\mcp\doors_mcp.py `
+  --db "C:\ruta\doors_requirements.db"
 ```
 
-## Texto enviado al modelo de embeddings
+No necesita una sesion DOORS abierta.
 
-Cada vector representa una composición determinista de:
+## Configuracion en VS Code
 
-```text
-Module
-UniqueIdentifier
-DOORS Identifier
-Outline
-Heading
-Text
-atributos adicionales de DOORS
-```
-
-No se envía el BLOB almacenado ni metadatos técnicos de sincronización.
-
-## MCP en VS Code
-
-Ejemplo `.vscode/mcp.json`:
+El MCP solo recibe el path de la base:
 
 ```json
 {
   "servers": {
-    "doors": {
+    "requirements": {
       "type": "stdio",
       "command": "C:\\ruta\\doors_mcp_rag\\.venv\\Scripts\\python.exe",
       "args": [
-        "C:\\ruta\\doors_mcp_rag\\mcp\\doors_mcp.py"
-      ],
-      "env": {
-        "DOORS_MODULE_PATH": "/Proyecto/Requisitos/Requisitos del sistema",
-        "DOORS_SQLITE_PATH": "C:\\ruta\\doors_mcp_rag\\sync\\doors_requirements.db",
-        "DOORS_START_TIMEOUT_SECONDS": "30",
-        "DOORS_DXL_TIMEOUT_SECONDS": "90",
-        "DOORS_DXL_RUN_LIMIT_CYCLES": "0",
-        "DOORS_EMBEDDING_BASE_URL": "http://TU_SERVIDOR:PUERTO/v1",
-        "DOORS_EMBEDDING_MODEL": "TU_MODELO_DE_EMBEDDINGS",
-        "DOORS_EMBEDDING_API_KEY": ""
-      }
+        "C:\\ruta\\doors_mcp_rag\\mcp\\doors_mcp.py",
+        "--db",
+        "C:\\ruta\\doors_requirements.db"
+      ]
     }
   }
 }
 ```
 
-## Tools MCP
+La configuracion de Daisei no se repite en `mcp.json`; queda encapsulada en Python + `.env`.
 
-Acceso directo a DOORS:
+## Tools MCP locales
 
-```text
-doors_configuration
-start_doors_session
-doors_status
-list_object_attributes
-validate_attributes
-list_requirements
-```
-
-Acceso a la copia local SQLite:
+El servidor expone solo consultas a SQLite:
 
 ```text
-local_database_status
+database_status
+list_modules
 find_requirement_by_unique_identifier
 find_requirement_by_identifier
-get_local_requirement_by_id
-get_local_requirement_by_absolute_number
-```
-
-Trazabilidad:
-
-```text
-traceability_status
-sync_traceability
-get_requirement_relations_by_absolute_number
-get_requirement_relations_by_unique_identifier
-get_requirement_relations_by_identifier
-get_requirement_relations_by_id
-```
-
-Embeddings:
-
-```text
-embedding_status
-calculate_embeddings
+get_requirement_by_id
+get_requirement_by_absolute_number
+search_requirements_text
 search_requirements_by_embedding
+get_relations_by_unique_identifier
+get_relations_by_identifier
+get_relations_by_id
+get_relations_by_absolute_number
 ```
 
 Ejemplos conceptuales:
 
 ```text
 find_requirement_by_unique_identifier("REQ_MENSAJES")
-get_local_requirement_by_absolute_number(123, module_path="/Proyecto/Requisitos")
-get_requirement_relations_by_unique_identifier("REQ_MENSAJES", direction="both")
-search_requirements_by_embedding("requisitos sobre pérdida de comunicaciones", limit=10)
+get_requirement_by_id(123)
+get_requirement_by_absolute_number(451, module_path="/Proyecto/Requisitos")
+search_requirements_text("timeout de comunicaciones")
+search_requirements_by_embedding("perdida del enlace de datos", limit=10)
+get_relations_by_unique_identifier("REQ_MENSAJES", direction="both")
 ```
 
-Una relación MCP devuelve los extremos `source` y `target`, la dirección vista desde el requisito consultado, el `link_module_path` y un bloque `related_requirement` para que el agente pueda navegar el grafo directamente.
+Las consultas de relaciones enriquecen `source` y `target` con los datos locales del requisito cuando el extremo relacionado tambien esta presente en `requirements`.
 
-La búsqueda semántica genera el embedding de la consulta con el mismo modelo configurado y calcula similitud coseno contra los vectores válidos almacenados en SQLite.
+## Estructura relevante
 
-## Pruebas
-
-```powershell
-python .\tests\test_sync_fake.py
-python .\tests\test_repository_embeddings.py
-python .\tests\test_traceability_repository.py
+```text
+doors_mcp_rag/
+├── .env                         # configuracion Daisei; no se pasa al MCP
+├── mcp/
+│   └── doors_mcp.py             # SOLO SQLite + embedding de consulta
+├── sync/
+│   ├── local_repository.py      # acceso read-only usado por MCP
+│   ├── daisei_embedding.py      # adaptador de create_embedding
+│   ├── repository.py            # repositorio de ingesta/escritura
+│   ├── embeddings.py            # generacion incremental
+│   ├── embed_requirements.py
+│   ├── doors_client.py          # solo proceso de ingesta
+│   ├── sync_service.py
+│   ├── traceability.py
+│   ├── sync_traceability.py
+│   └── sync_doors.py
+└── tests/
 ```
 
-Estas pruebas no necesitan un endpoint real de embeddings ni una sesión DOORS. La parte DXL real de trazabilidad debe validarse contra vuestro entorno DOORS Classic.
-
-Consulta `docs/SPECIFICATION.md` para el catálogo general de requisitos, `docs/EMBEDDINGS.md` para la capa vectorial y `docs/TRACEABILITY.md` para el grafo de relaciones.
+La separacion es deliberada: **DOORS alimenta la base; el agente solo ve la base**.
