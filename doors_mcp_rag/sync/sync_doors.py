@@ -5,6 +5,11 @@ import os
 from pathlib import Path
 
 from doors_client import DoorsClient
+from embeddings import (
+    EmbeddingConfig,
+    OpenAICompatibleEmbeddingProvider,
+    generate_embeddings,
+)
 from repository import RequirementsRepository
 from sync_service import sync_module
 
@@ -36,8 +41,8 @@ def parse_args() -> argparse.Namespace:
         "--attributes",
         default="",
         help=(
-            "Lista separada por comas de atributos extra. "
-            "Object Heading y Object Text se añaden automáticamente."
+            "Lista separada por comas de atributos extra. Object Heading, "
+            "Object Text y REM_UniqueIdentifier se añaden automáticamente."
         ),
     )
     parser.add_argument(
@@ -56,6 +61,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="No esperar ENTER después de crear DOORS.Application.",
     )
+    parser.add_argument(
+        "--calculate-embeddings",
+        action="store_true",
+        help=(
+            "Tras sincronizar DOORS, calcula los embeddings pendientes usando "
+            "DOORS_EMBEDDING_BASE_URL y DOORS_EMBEDDING_MODEL."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-force",
+        action="store_true",
+        help="Recalcula todos los embeddings del módulo.",
+    )
+    parser.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=None,
+        help="Sobrescribe DOORS_EMBEDDING_BATCH_SIZE para esta ejecución.",
+    )
     return parser.parse_args()
 
 
@@ -63,9 +87,7 @@ def main() -> None:
     args = parse_args()
     module_path = args.module.strip()
     if not module_path:
-        raise SystemExit(
-            "Falta --module y DOORS_MODULE_PATH no está definida."
-        )
+        raise SystemExit("Falta --module y DOORS_MODULE_PATH no está definida.")
 
     extra_attributes = [
         item.strip()
@@ -113,8 +135,32 @@ def main() -> None:
         print(f"Sin cambios:   {stats.unchanged}")
         print(f"Eliminados:    {stats.marked_deleted}")
         print(f"Base SQLite:   {Path(args.db).resolve()}")
+
     finally:
         client.close()
+
+    if args.calculate_embeddings:
+        print()
+        print("4. Calculando embeddings pendientes...")
+        config = (
+            EmbeddingConfig.from_env()
+            .with_batch_size(args.embedding_batch_size)
+            .validate()
+        )
+        provider = OpenAICompatibleEmbeddingProvider(config)
+        embedding_stats = generate_embeddings(
+            repository,
+            provider,
+            module_path=module_path,
+            batch_size=config.batch_size,
+            max_input_chars=config.max_input_chars,
+            force=args.embedding_force,
+        )
+        print("Embeddings:", embedding_stats.as_dict())
+        print(
+            "Estado:",
+            repository.embedding_status(module_path=module_path, model=config.model),
+        )
 
 
 if __name__ == "__main__":
