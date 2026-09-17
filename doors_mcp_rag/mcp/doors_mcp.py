@@ -11,26 +11,30 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 
+# El repositorio read-only vive junto al MCP y no depende de DOORS.
+from local_repository import LocalRequirementsRepository
+
+# Solo se añade sync/ para reutilizar el adaptador de embeddings Daisei.
+# No se importa DoorsClient, traceability.py ni ningun modulo COM/DXL.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SYNC_DIR = PROJECT_ROOT / "sync"
 if str(SYNC_DIR) not in sys.path:
-    sys.path.insert(0, str(SYNC_DIR))
+    sys.path.append(str(SYNC_DIR))
 
 from daisei_embedding import (  # noqa: E402
     DEFAULT_EMBEDDING_MODEL,
     DaiseiEmbeddingProvider,
 )
-from local_repository import LocalRequirementsRepository  # noqa: E402
 
 
 mcp = MCPServer(
     "Requirements Knowledge Base",
     instructions=(
         "Servidor MCP estrictamente de solo lectura sobre una base SQLite local. "
-        "Nunca consulta IBM DOORS ni sincroniza datos en tiempo real. Todos los "
-        "requisitos, atributos y relaciones proceden exclusivamente de la base "
-        "indicada con --db. Daisei se usa unicamente para calcular el embedding "
-        "de una consulta semantica; no se usa chat ni para obtener requisitos."
+        "Nunca consulta IBM DOORS ni sincroniza informacion en tiempo real. "
+        "Todos los requisitos, atributos y enlaces proceden exclusivamente del "
+        "fichero indicado con --db. Daisei solo se usa para convertir una consulta "
+        "semantica en un vector; no se usa chat ni generacion de texto."
     ),
 )
 
@@ -107,11 +111,12 @@ def _relations_for_matches(
 
 @mcp.tool(title="Estado de la base local", annotations=READ_ONLY)
 def database_status() -> dict[str, Any]:
-    """Describe la base SQLite que alimenta exclusivamente este MCP."""
+    """Describe exclusivamente el contenido disponible en SQLite."""
     try:
         status = _repository().status()
         status["ok"] = True
         status["semantic_query_model"] = DEFAULT_EMBEDDING_MODEL
+        status["live_doors_access"] = False
         return status
     except Exception as exc:
         return _error(exc)
@@ -130,7 +135,7 @@ def list_modules() -> dict[str, Any]:
 def find_requirement_by_unique_identifier(
     unique_identifier: Annotated[
         str,
-        Field(description="REM_UniqueIdentifier, por ejemplo REQ_MENSAJES."),
+        Field(description="Valor guardado de REM_UniqueIdentifier, p.ej. REQ_MENSAJES."),
     ],
     module_path: Annotated[str | None, Field()] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
@@ -147,7 +152,7 @@ def find_requirement_by_unique_identifier(
         return _error(exc)
 
 
-@mcp.tool(title="Buscar por identifier de DOORS", annotations=READ_ONLY)
+@mcp.tool(title="Buscar por identifier", annotations=READ_ONLY)
 def find_requirement_by_identifier(
     identifier: Annotated[str, Field(description="identifier(obj) guardado en SQLite.")],
     module_path: Annotated[str | None, Field()] = None,
@@ -185,7 +190,7 @@ def get_requirement_by_absolute_number(
     absolute_number: Annotated[int, Field(ge=1)],
     module_path: Annotated[
         str | None,
-        Field(description="Opcional. Recomendado si la DB contiene varios modulos."),
+        Field(description="Opcional si la DB contiene un unico modulo."),
     ] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
@@ -213,12 +218,13 @@ def search_requirements_text(
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> dict[str, Any]:
     try:
+        value = _required_text(query, "query")
         results = _repository().search_text(
-            _required_text(query, "query"),
+            value,
             module_path=_optional_module_path(module_path),
             limit=limit,
         )
-        return {"ok": True, "query": query, "count": len(results), "results": results}
+        return {"ok": True, "query": value, "count": len(results), "results": results}
     except Exception as exc:
         return _error(exc)
 
@@ -233,19 +239,20 @@ def search_requirements_by_embedding(
     limit: Annotated[int, Field(ge=1, le=100)] = 10,
     min_score: Annotated[float | None, Field(ge=-1.0, le=1.0)] = None,
 ) -> dict[str, Any]:
-    """Genera solo el vector de consulta con Daisei y busca en la SQLite local."""
+    """Daisei calcula solo el vector de la consulta; los resultados salen de SQLite."""
     try:
         repository = _repository()
         status = repository.status()
         available_models = status["embedding_models"]
         if DEFAULT_EMBEDDING_MODEL not in available_models:
             raise ValueError(
-                f"La DB no contiene embeddings para el modelo {DEFAULT_EMBEDDING_MODEL!r}. "
-                f"Modelos disponibles: {available_models}. Calculalos antes de iniciar el MCP."
+                f"La DB no contiene embeddings para {DEFAULT_EMBEDDING_MODEL!r}. "
+                f"Modelos disponibles: {available_models}. Calculalos previamente."
             )
 
         provider = _embedding_provider()
-        query_vector = provider.embed_one(_required_text(query, "query"))
+        value = _required_text(query, "query")
+        query_vector = provider.embed_one(value)
         results = repository.search_by_embedding(
             query_vector,
             model=provider.model,
@@ -255,8 +262,42 @@ def search_requirements_by_embedding(
         )
         return {
             "ok": True,
-            "query": query,
+            "query": value,
             "model": provider.model,
+            "count": len(results),
+            "results": results,
+        }
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(title="Buscar mediante un vector ya calculado", annotations=READ_ONLY)
+def search_requirements_by_vector(
+    embedding: Annotated[
+        list[float],
+        Field(min_length=1, description="Vector de consulta ya calculado."),
+    ],
+    model: Annotated[
+        str,
+        Field(description="Modelo con el que se calculo el vector y los embeddings de la DB."),
+    ],
+    module_path: Annotated[str | None, Field()] = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 10,
+    min_score: Annotated[float | None, Field(ge=-1.0, le=1.0)] = None,
+) -> dict[str, Any]:
+    """Busqueda 100% local: no realiza ninguna llamada a Daisei."""
+    try:
+        model_name = _required_text(model, "model")
+        results = _repository().search_by_embedding(
+            embedding,
+            model=model_name,
+            module_path=_optional_module_path(module_path),
+            limit=limit,
+            min_score=min_score,
+        )
+        return {
+            "ok": True,
+            "model": model_name,
             "count": len(results),
             "results": results,
         }
@@ -344,12 +385,12 @@ def get_relations_by_absolute_number(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="MCP de solo lectura sobre la base SQLite de requisitos."
+        description="MCP read-only sobre una base SQLite de requisitos."
     )
     parser.add_argument(
         "--db",
         required=True,
-        help="Ruta a doors_requirements.db. Es la unica configuracion del MCP.",
+        help="Ruta a doors_requirements.db. Es el unico argumento de configuracion.",
     )
     return parser.parse_args()
 
