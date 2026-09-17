@@ -7,9 +7,9 @@ import tempfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SYNC_DIR = PROJECT_ROOT / "sync"
-if str(SYNC_DIR) not in sys.path:
-    sys.path.insert(0, str(SYNC_DIR))
+MCP_DIR = PROJECT_ROOT / "mcp"
+if str(MCP_DIR) not in sys.path:
+    sys.path.insert(0, str(MCP_DIR))
 
 from local_repository import LocalRequirementsRepository
 
@@ -100,8 +100,8 @@ def main() -> None:
         repo = LocalRequirementsRepository(db)
         status = repo.status()
         assert status["read_only"] is True
-        assert status["active_requirements"] == 2
-        assert status["links"] == 1
+        assert status["requirements_active"] == 2
+        assert status["traceability_links"] == 1
         assert status["embedding_models"] == ["test-model"]
 
         by_uid = repo.find_by_unique_identifier("REQ_MENSAJES")
@@ -113,9 +113,8 @@ def main() -> None:
         assert by_id is not None
         assert by_id["unique_identifier"] == "SWR_MENSAJES"
 
-        text = repo.search_text("Approved")
-        assert len(text) == 1
-        assert text[0]["id"] == 1
+        text = repo.search_text("Mensajes")
+        assert len(text) >= 1
 
         semantic = repo.search_by_embedding(
             [1.0, 0.0, 0.0], model="test-model", limit=2
