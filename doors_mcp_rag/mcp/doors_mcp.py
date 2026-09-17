@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
@@ -23,6 +23,11 @@ from embeddings import (  # noqa: E402
     generate_embeddings,
 )
 from repository import RequirementsRepository  # noqa: E402
+from traceability import (  # noqa: E402
+    DoorsTraceabilitySource,
+    TraceabilityRepository,
+    sync_module_traceability,
+)
 
 
 DEFAULT_MODULE_PATH = os.environ.get("DOORS_MODULE_PATH", "").strip()
@@ -38,10 +43,10 @@ mcp = MCPServer(
     "IBM DOORS Classic Requirements",
     instructions=(
         "Servidor MCP local para IBM DOORS Classic y su copia SQLite. "
-        "Las tools local_* no necesitan una sesión DOORS. La búsqueda semántica "
-        "usa el endpoint OpenAI-compatible configurado en las variables "
-        "DOORS_EMBEDDING_* y compara el vector de consulta con los embeddings "
-        "almacenados en SQLite."
+        "Las tools locales no necesitan una sesión DOORS. La búsqueda semántica "
+        "usa el endpoint OpenAI-compatible configurado en DOORS_EMBEDDING_*. "
+        "La trazabilidad se sincroniza desde los enlaces estándar de DOORS y se "
+        "consulta localmente desde SQLite."
     ),
 )
 
@@ -61,6 +66,7 @@ LOCAL_WRITE = ToolAnnotations(
 
 _CLIENT: DoorsClient | None = None
 _REPOSITORY: RequirementsRepository | None = None
+_TRACE_REPOSITORY: TraceabilityRepository | None = None
 
 
 def _client() -> DoorsClient:
@@ -76,6 +82,14 @@ def _repository() -> RequirementsRepository:
         _REPOSITORY = RequirementsRepository(DEFAULT_DB_PATH)
         _REPOSITORY.initialise()
     return _REPOSITORY
+
+
+def _trace_repository() -> TraceabilityRepository:
+    global _TRACE_REPOSITORY
+    if _TRACE_REPOSITORY is None:
+        _TRACE_REPOSITORY = TraceabilityRepository(_repository())
+        _TRACE_REPOSITORY.initialise()
+    return _TRACE_REPOSITORY
 
 
 def _module_path(value: str | None) -> str:
@@ -116,6 +130,26 @@ def _error(exc: Exception, module_path: str | None = None) -> dict[str, Any]:
         "error": str(exc),
         "error_type": type(exc).__name__,
         "module_path": module_path,
+    }
+
+
+def _relations_for_requirement(
+    requirement: dict,
+    *,
+    direction: Literal["incoming", "outgoing", "both"],
+    limit: int,
+) -> dict[str, Any]:
+    relations = _trace_repository().get_relations(
+        str(requirement["module_path"]),
+        int(requirement["absolute_number"]),
+        direction=direction,
+        limit=limit,
+    )
+    return {
+        "requirement": requirement,
+        "direction": direction,
+        "relation_count": len(relations),
+        "relations": relations,
     }
 
 
@@ -259,6 +293,7 @@ def local_database_status(
             "sqlite_path": str(DEFAULT_DB_PATH),
             "module_path": selected,
             "active_requirements": count,
+            "traceability_links": _trace_repository().count_links(module_path=selected),
             "embedding": repository.embedding_status(
                 module_path=selected,
                 model=config.model or None,
@@ -347,6 +382,176 @@ def get_local_requirement_by_absolute_number(
         }
     except Exception as exc:
         return _error(exc, selected)
+
+
+# ---------------------------------------------------------------------------
+# Trazabilidad / relaciones de requisitos
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(title="Estado de trazabilidad local", annotations=READ_ONLY)
+def traceability_status(
+    module_path: Annotated[str | None, Field()] = None,
+) -> dict[str, Any]:
+    selected = _optional_module_path(module_path)
+    try:
+        trace_repository = _trace_repository()
+        return {
+            "ok": True,
+            "module_path": selected,
+            "link_count": trace_repository.count_links(module_path=selected),
+            "recent_sync_runs": (
+                trace_repository.recent_sync_runs(selected, limit=10)
+                if selected
+                else []
+            ),
+        }
+    except Exception as exc:
+        return _error(exc, selected)
+
+
+@mcp.tool(title="Sincronizar trazabilidad desde DOORS", annotations=LOCAL_WRITE)
+def sync_traceability(
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[
+        Literal["incoming", "outgoing", "both"],
+        Field(description="Dirección de relaciones a extraer."),
+    ] = "both",
+    strict_incoming: Annotated[
+        bool,
+        Field(
+            description=(
+                "Si es true, aborta sin sustituir la copia local cuando DOORS "
+                "no puede cargar algún módulo origen de enlaces entrantes."
+            )
+        ),
+    ] = True,
+) -> dict[str, Any]:
+    selected: str | None = None
+    try:
+        selected = _module_path(module_path)
+        repository = _repository()
+        if repository.count_requirements(selected) == 0:
+            raise ValueError(
+                "No hay requisitos locales del módulo. Sincroniza primero los requisitos."
+            )
+        stats = sync_module_traceability(
+            DoorsTraceabilitySource(_client()),
+            repository,
+            selected,
+            direction=direction,
+            load_incoming_sources=direction in ("incoming", "both"),
+            strict_incoming=strict_incoming,
+        )
+        return {
+            "ok": True,
+            "module_path": selected,
+            "stats": stats.as_dict(),
+            "link_count": _trace_repository().count_links(module_path=selected),
+        }
+    except Exception as exc:
+        return _error(exc, selected)
+
+
+@mcp.tool(title="Relaciones por Absolute Number", annotations=READ_ONLY)
+def get_requirement_relations_by_absolute_number(
+    absolute_number: Annotated[int, Field(ge=1)],
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    selected: str | None = None
+    try:
+        selected = _module_path(module_path)
+        requirement = _repository().get_requirement(selected, absolute_number)
+        if requirement is None:
+            raise ValueError(
+                f"No existe Absolute Number {absolute_number} en {selected}."
+            )
+        return {"ok": True, **_relations_for_requirement(requirement, direction=direction, limit=limit)}
+    except Exception as exc:
+        return _error(exc, selected)
+
+
+@mcp.tool(title="Relaciones por UniqueIdentifier", annotations=READ_ONLY)
+def get_requirement_relations_by_unique_identifier(
+    unique_identifier: Annotated[
+        str,
+        Field(description="Valor REM_UniqueIdentifier, por ejemplo REQ_MENSAJES."),
+    ],
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    selected = _optional_module_path(module_path)
+    try:
+        value = _required_text(unique_identifier, "unique_identifier")
+        requirements = _repository().find_by_unique_identifier(
+            value,
+            module_path=selected,
+            limit=100,
+        )
+        groups = [
+            _relations_for_requirement(req, direction=direction, limit=limit)
+            for req in requirements
+        ]
+        return {
+            "ok": True,
+            "unique_identifier": value,
+            "matches": len(groups),
+            "results": groups,
+        }
+    except Exception as exc:
+        return _error(exc, selected)
+
+
+@mcp.tool(title="Relaciones por identifier de DOORS", annotations=READ_ONLY)
+def get_requirement_relations_by_identifier(
+    identifier: Annotated[str, Field(description="Valor de identifier(obj) en DOORS.")],
+    module_path: Annotated[str | None, Field()] = None,
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    selected = _optional_module_path(module_path)
+    try:
+        value = _required_text(identifier, "identifier")
+        requirements = _repository().find_by_identifier(
+            value,
+            module_path=selected,
+            limit=100,
+        )
+        groups = [
+            _relations_for_requirement(req, direction=direction, limit=limit)
+            for req in requirements
+        ]
+        return {
+            "ok": True,
+            "identifier": value,
+            "matches": len(groups),
+            "results": groups,
+        }
+    except Exception as exc:
+        return _error(exc, selected)
+
+
+@mcp.tool(title="Relaciones por ID local SQLite", annotations=READ_ONLY)
+def get_requirement_relations_by_id(
+    requirement_id: Annotated[int, Field(ge=1)],
+    direction: Annotated[Literal["incoming", "outgoing", "both"], Field()] = "both",
+    limit: Annotated[int, Field(ge=1, le=5000)] = 200,
+) -> dict[str, Any]:
+    try:
+        requirement = _repository().get_requirement_by_database_id(requirement_id)
+        if requirement is None:
+            raise ValueError(f"No existe requirement.id={requirement_id}.")
+        return {"ok": True, **_relations_for_requirement(requirement, direction=direction, limit=limit)}
+    except Exception as exc:
+        return _error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------------------------
 
 
 @mcp.tool(title="Estado de embeddings locales", annotations=READ_ONLY)
