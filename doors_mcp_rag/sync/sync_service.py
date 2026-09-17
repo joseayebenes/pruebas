@@ -7,6 +7,9 @@ from models import RequirementRecord
 from repository import RequirementsRepository
 
 
+UNIQUE_IDENTIFIER_ATTRIBUTE = "REM_UniqueIdentifier"
+
+
 class RequirementsSource(Protocol):
     """Interfaz mínima que necesita el sincronizador."""
 
@@ -39,6 +42,13 @@ class SyncStats:
         return asdict(self)
 
 
+def _nullable_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _requirement_from_doors(
     module_path: str,
     item: dict,
@@ -55,6 +65,7 @@ def _requirement_from_doors(
 
     heading = str(attributes.get("Object Heading", ""))
     text = str(attributes.get("Object Text", ""))
+    unique_identifier = _nullable_text(attributes.get(UNIQUE_IDENTIFIER_ATTRIBUTE))
 
     source_last_modified = None
     if modified_attribute:
@@ -66,6 +77,7 @@ def _requirement_from_doors(
         module_path=module_path,
         absolute_number=absolute_number,
         identifier=str(item.get("identifier", "")),
+        unique_identifier=unique_identifier,
         outline_number=str(item.get("outline_number", "")),
         heading=heading,
         text=text,
@@ -88,6 +100,9 @@ def sync_module(
     """
     Hace una sincronización completa y segura de un módulo DOORS.
 
+    `REM_UniqueIdentifier` se descarga siempre y se proyecta a la columna
+    `requirements.unique_identifier`. Un valor vacío se guarda como NULL.
+
     Regla crítica: los requisitos ausentes solo se marcan como eliminados cuando
     hemos llegado correctamente al final de todas las páginas.
     """
@@ -99,10 +114,11 @@ def sync_module(
         selected_attributes.insert(0, "Object Heading")
     if "Object Text" not in selected_attributes:
         selected_attributes.insert(1, "Object Text")
+    if UNIQUE_IDENTIFIER_ATTRIBUTE not in selected_attributes:
+        selected_attributes.append(UNIQUE_IDENTIFIER_ATTRIBUTE)
     if modified_attribute and modified_attribute not in selected_attributes:
         selected_attributes.append(modified_attribute)
 
-    # La validación ocurre una vez, antes de empezar a escribir la BD.
     source.validate_attributes(module_path, selected_attributes)
 
     repository.initialise()
@@ -169,7 +185,6 @@ def sync_module(
             used_cursors.add(next_cursor)
             cursor = next_cursor
 
-        # Solo llegamos aquí si TODAS las páginas terminaron correctamente.
         with repository.transaction() as connection:
             stats.marked_deleted = repository.mark_missing_as_deleted(
                 module_path,
